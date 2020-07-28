@@ -1,0 +1,4 @@
+rootProject.name = 'practice-reactor'
+include 'reactor'
+include 'reactive-stream'
+
