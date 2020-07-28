@@ -1,0 +1,10 @@
+repositories {
+    maven { url 'https://repo.spring.io/libs-snapshot' }
+}
+
+dependencies {
+    implementation platform('io.projectreactor:reactor-bom:2020.0.0-M1')
+
+    implementation 'io.projectreactor:reactor-core'
+    testImplementation 'io.projectreactor:reactor-test'
+}
