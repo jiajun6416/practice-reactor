@@ -7,4 +7,5 @@ dependencies {
 
     implementation 'io.projectreactor:reactor-core'
     testImplementation 'io.projectreactor:reactor-test'
+    implementation 'com.jiajun:practice-common:1.0.0'
 }
