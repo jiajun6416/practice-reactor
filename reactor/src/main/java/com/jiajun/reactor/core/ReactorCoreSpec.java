@@ -24,6 +24,7 @@ import java.io.InputStreamReader;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
@@ -549,13 +550,35 @@ public class ReactorCoreSpec {
         Schedulers.single(); // newSingle: 线程数: 1
     }
 
+    /**
+     * context是不可变map, 每次修改都会重新创建一个context
+     * context是个单独的序列, 其顺序是从下到上
+     */
     @Test
     public void context() {
-        String key = "message";
-        Mono<String> r = Mono.just("Hello")
-                .flatMap( s -> Mono.subscriberContext().map( ctx -> s + " " + ctx.get(key)))
-                .subscriberContext(ctx -> ctx.put(key, "World")); // 放入Context
+        Mono.just("a")
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + s))
+                .subscriberContext(ctx -> ctx.put("key1", "context1")) // 将context绑定到链路上
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s))
+                .subscribe(System.out::println);
+        Flux.range(1, 10)
+                .map(i -> i + "1")
+                .subscriberContext(context -> context)
+                .map(i -> i + "2")
+                .subscribe(System.out::println);
 
-        StepVerifier.create(r).expectNext("Hello World").verifyComplete();
+        Mono.just(1)
+                .flatMap(i -> Mono.subscriberContext().map(cxt -> i + "" + cxt.get("key1")))
+                .subscriberContext(ctx -> ctx.put("key1", "1")) // 将context绑定到链路上
+                .map(i -> i + "2")
+                .subscribe(System.out::println);
+
+        // 使用Zip将Context合并在序列中
+        Mono<String> mono = Mono.just("a").zipWith(Mono.subscriberContext()).map(tuple -> {
+            Optional<Object> userOptional = tuple.getT2().getOrEmpty("uid");
+            return userOptional.map(o -> "loginUser: " + o).orElse("un login");
+        });
+        mono.subscriberContext(ctx -> ctx.put("uid", 10086)).subscribe(System.out::println);
     }
+
 }
