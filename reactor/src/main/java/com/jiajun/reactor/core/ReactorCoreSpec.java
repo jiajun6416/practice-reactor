@@ -2,6 +2,7 @@ package com.jiajun.reactor.core;
 
 import com.alibaba.fastjson.JSON;
 import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -16,6 +17,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuple3;
 
 import java.io.BufferedReader;
 import java.io.FileInputStream;
@@ -24,12 +27,14 @@ import java.io.InputStreamReader;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * @author jiajun
@@ -581,4 +586,161 @@ public class ReactorCoreSpec {
         mono.subscriberContext(ctx -> ctx.put("uid", 10086)).subscribe(System.out::println);
     }
 
+    /**
+     * 创建序列API
+     */
+    @Test
+    public void createApi() {
+        // just
+        Flux.just(1, 3, 4);
+        // 延迟特性
+        Mono.fromSupplier(() -> 1);
+        //基于迭代数据结构
+        Flux.fromArray(new String[]{"a", "b", "c"});
+        Flux.fromStream(Stream.of(1, 2, 3, 4));
+        Flux.fromStream(() -> Stream.of(1, 2, 3, 4));
+        Flux.fromIterable(() -> Arrays.asList(1, 2, 3).iterator());
+
+        // 异步结果
+        Mono.fromCallable(() -> 1);
+        Mono.fromFuture(CompletableFuture.completedFuture(1));
+
+        // 立即生成异常
+        Mono.error(Exception::new);
+
+        // 可编程生成: 同步
+        Flux.generate(
+                () -> 1,
+                (status, sink) -> {
+                    if (status > 10) {
+                        sink.complete();
+                    }
+                    sink.next(status);
+                    return status++;
+                });
+
+        // 可编程生成: 支持异步
+        Mono.create(
+                sink -> Futures.addCallback(SettableFuture.create(), new FutureCallback<Object>() {
+                    @Override
+                    public void onSuccess(@Nullable Object result) {
+                        sink.success(result);
+                    }
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        sink.error(t);
+                    }
+                })
+        );
+    }
+
+    @Test
+    public void mapApi() {
+        // map
+        Mono<String> mapMono = Mono.just(1).map(String::valueOf);
+        // cast
+        Mono<Integer> castMono = Mono.just(1).cast(Integer.class);
+        // 获取index
+        Flux<Tuple2<Long, Integer>> valueIndex = Flux.range(1, 10).index();
+
+        // handle: 任意转换, 单个值/多个值/异常
+        Mono<String> handleMap = Mono.just(1).handle((integer, synchronousSink) -> synchronousSink.next("a")).cast(String.class);
+
+        // flatMap: 扁平多个publisher
+        Mono<Integer> flatMap = Mono.just(1).flatMap(i -> Mono.just(i * i));
+        // flatMap保留原本顺序
+        Flux<Integer> flatMapSequential = Flux.range(1, 10).flatMapSequential(i -> Mono.just(i * i));
+
+        // flux -> 集合的mono
+        Mono<List<Integer>> flux2List = Flux.range(1, 100).collectList();
+        Mono<Map<Integer, Integer>> flux2Map = Flux.range(1, 100).collectMap(Function.identity(), Function.identity());
+        Mono<List<Integer>> flux2SortList = Flux.range(1, 100).collectSortedList();
+        Flux.range(1, 100).collect(Collectors.toList()); // 参考java8中的集合
+
+        // 计数
+        Mono<Long> fluxCount = Flux.range(1, 100).count();
+
+        // 合并publisher: concat
+        Flux.concat(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)).subscribe(System.out::print);
+        Flux.concatDelayError(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)); // delayError:等所有的合并完成后再丢Error
+
+        // 合并publisher: merge
+        Flux.merge(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)).subscribe(System.out::print);// 按照发射顺序合并
+        Flux.mergeSequential(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)); // sequential: 按照订阅的顺序合并?
+
+        // zip: 将多个元素打包成 返回Tuple
+        Flux<Tuple3<Integer, Integer, Integer>> zip3 = Flux.zip(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10));
+
+        // 代替空序列
+        Mono.empty().defaultIfEmpty("defaultIfEmpty").subscribe(System.out::println);
+        Mono.empty().switchIfEmpty(Mono.just("defaultIfEmpty")).subscribe(System.out::println); // 使用默认的publisher代替
+    }
+
+    /**
+     * doOn是只读操作, 不影响序列. 一般用来记录日志
+     */
+    @Test
+    public void doOn() {
+        // doOneNext
+        // doOnComplete
+        // doOnCancel
+        // doOnSubscribe
+        // doOnRequest
+        // doFinally
+    }
+
+    /**
+     * https://htmlpreview.github.io/?https://github.com/get-set/reactor-core/blob/master-zh/src/docs/index.html#which.filtering
+     * https://projectreactor.io/docs/core/release/reference/index.html#which.filtering
+     * 相比stream, flux中的序列操作更加强大
+     * filter: 会对比每个元素
+     * - until/while: 相当于一个开关, 只要某个位置满足/不满足, 后续都不再对别. 相当于 any操作
+     * xxxUntil: 一直操作,当条件满足时结束该操作
+     * xxxWhile: 条件满足时操作, 当某个元素导致条件不满足则结束该操作
+     */
+    @Test
+    public void filter() throws IOException {
+        // filter: 通过指定的条件过滤
+        Flux.range(1, 100).filter(i -> i % 2 == 0);
+        Flux.range(1, 100).filterWhen(i -> Mono.just(i % 2 == 0)); // 可以异步判断
+
+        // 去重
+        Flux.range(1, 100).distinct(); // 整体序列去重
+        Flux.range(1, 100).distinctUntilChanged(); // 只去重连续重复的元素
+
+        // 取一部分元素
+        Flux.range(1, 10).take(20).subscribe(System.out::print); // 取前n个元素
+        System.out.println();
+        Flux.range(1, 10).takeLast(20).subscribe(System.out::print); // 取最后n个元素
+        Flux.range(1, 100).next(); // 取第一个元素放入mono
+        System.out.println();
+        Flux.just(1, 5, 6, 3, 4).takeUntil(i -> i > 5).subscribe(System.out::print); // 满足条件后不再take
+        System.out.println();
+        Flux.just(1, 5, 6, 3, 4).takeWhile(i -> i <= 5).subscribe(System.out::print); // 只要不满足条件即不再take
+
+        // 只取一个元素
+        Flux.range(1, 10).elementAt(2);
+        Flux.range(1, 10).takeLast(1);
+        Flux.range(1, 10).last();
+        Flux.range(1, 10).last(0); // 不存在设置默认值
+
+        // 跳过
+        Flux.range(1, 10).skip(2); // 跳过前面几个
+        Flux.range(1, 10).skip(Duration.ofSeconds(2)); // 跳过指定时间内
+        Flux.range(1, 10).skipLast(2); // 跳过最后几个
+        System.out.println();
+        Flux.just(1, 5, 6, 3, 4).skipUntil(i -> i > 5).subscribe(System.out::print); // 跳过直到满足某个条件, 后续都不跳过
+        System.out.println();
+        Flux.just(1, 5, 6, 3, 4).skipWhile(i -> i <= 5).subscribe(System.out::print); // 符合条件的都跳过, 后续都不跳过
+
+        // 采样, 可以用来做窗口统计
+        System.out.println();
+        Flux.interval(Duration.ofMillis(100))
+                .take(Duration.ofSeconds(2)) // 只取2s内的值
+                //.sample(Duration.ofSeconds(1)) // 采样周期
+                .subscribe(System.out::print);
+
+        System.in.read();
+    }
 }
