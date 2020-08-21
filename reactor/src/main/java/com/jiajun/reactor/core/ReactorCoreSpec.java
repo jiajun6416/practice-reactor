@@ -743,4 +743,48 @@ public class ReactorCoreSpec {
 
         System.in.read();
     }
+
+    /**
+     * 错误处理
+     */
+    @Test
+    public void errorProcessor() {
+        // 创建错误序列
+        Flux<Object> errorFlux = Flux.error(new RuntimeException());
+        Flux.concat(errorFlux);
+        Flux.just(1).then(Mono.error(new RuntimeException()));
+
+        // 使用try-catch-finally. onError: catch后的处理. doFinally: finally处理
+        Flux.just(1).then(Mono.error(new RuntimeException()))
+                .onErrorReturn(2) // catch后返回默认值
+                // .onErrorResume(error -> Mono.just(3)) // catch后返回默认publisher(其他计算)
+                 .onErrorMap(Exceptions::propagate)  // 将异常进行转换, 可以使用Exceptions对异常进行包装
+                .doFinally(signalType -> System.out.println("finally type: " + signalType)) // finally代码块, 能获取到序列是如何完成的
+                .subscribe(System.out::println);
+        // using: try-with-resource
+
+        // 处理回压错误: 上游push>下游request
+    }
+
+    /**
+     * 基于时间的操作
+     */
+    @Test
+    public void time() throws IOException {
+        // elapsed: 当前消息距离上个消息过去的时间, 单位ms
+        Flux.interval(Duration.ofSeconds(1)).elapsed().subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+        // timestamp: 带上每个消息产生的时间戳
+        Flux.interval(Duration.ofSeconds(1)).timestamp().subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+
+        // delaySubscription: 延时订阅
+        Flux.range(1, 10).delaySubscription(Duration.ofSeconds(5)).subscribe(System.out::print);
+        System.in.read();
+
+        // defer: lazy特性
+    }
+
+    @Test
+    public void splitting() {
+
+    }
 }
