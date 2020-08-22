@@ -13,10 +13,10 @@ import reactor.core.Disposable;
 import reactor.core.Exceptions;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
-import reactor.test.StepVerifier;
 import reactor.util.function.Tuple2;
 import reactor.util.function.Tuple3;
 
@@ -172,22 +172,6 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * 重塑消费者的需求
-     * buffer会将上游item缓存成集合
-     * request(2)表示每次请求两个buffer
-     */
-    @Test
-    public void buffer() {
-        Flux.range(1, 2).buffer(5).subscribe(System.out::println, null, null, subscription -> subscription.request(2));
-        Flux.range(1, 10).buffer(2).subscribe(new BaseSubscriber<List<Integer>>() {
-            @Override
-            protected void hookOnNext(List<Integer> value) {
-                System.out.println(value);
-            }
-        });
-    }
-
-    /**
      *
      */
     @Test
@@ -325,15 +309,6 @@ public class ReactorCoreSpec {
                 System.out.println(value);
             }
         });
-    }
-
-    @Test
-    public void handler() {
-        Flux.range(1, 10).handle((integer, synchronousSink) -> {
-            if (integer % 2 == 0) {
-                synchronousSink.next(integer * integer);
-            }
-        }).subscribe(System.out::println);
     }
 
     /**
@@ -494,48 +469,6 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * groupBy返回: Flux<GroupedFlux<K, T>>
-     */
-    @Test
-    public void groupBy() {
-        StepVerifier.create(Flux.just(1, 3, 5, 2, 4, 6, 11, 12, 13)
-                .groupBy(i -> i % 2 == 0 ? "even" : "odd")
-                .concatMap(g -> g.defaultIfEmpty(-1) //如果组为空，显示为 -1
-                        .map(String::valueOf) //转换为字符串
-                        .startWith(g.key())) //以该组的 key 开头
-        )
-                .expectNext("odd", "1", "3", "5", "11", "13")
-                .expectNext("even", "2", "4", "6", "12")
-                .verifyComplete();
-    }
-
-    /**
-     * window返回Flux<Flux<T>>
-     */
-    @Test
-    public void windowing() {
-        // window(maxSize): 收集5个元素关闭窗口, 开启下一个窗口.
-        StepVerifier.create(Flux.range(1, 10)
-                .window(5)
-                .concatMap(g -> g.defaultIfEmpty(-1)) //windows为空 显示为 -1
-        )
-                .expectNext(1, 2, 3, 4, 5)
-                .expectNext(6, 7, 8, 9, 10)
-                .verifyComplete();
-
-        // window(int maxSize, int skip)
-        StepVerifier.create(Flux.range(1, 10)
-                .window(5, 3) // 收集5个元素关闭窗口, 收集3个元素开启窗口. 会层叠2个元素, 如果maxSize>skip则会有元素不在窗口中
-                .concatMap(g -> g.defaultIfEmpty(-1)) //windows为空 显示为 -1
-        )
-                .expectNext(1, 2, 3, 4, 5)
-                .expectNext(4, 5, 6, 7, 8)
-                .expectNext(7, 8, 9, 10)
-                .expectNext(10)
-                .verifyComplete();
-    }
-
-    /**
      * 指定默认的执行器
      * 修改默认Scheduler为自定义鲜橙汁, 在需要使用额外线程的场景无需自己指定
      */
@@ -636,16 +569,19 @@ public class ReactorCoreSpec {
     }
 
     @Test
-    public void mapApi() {
-        // map
+    public void map() {
         Mono<String> mapMono = Mono.just(1).map(String::valueOf);
+
         // cast
         Mono<Integer> castMono = Mono.just(1).cast(Integer.class);
         // 获取index
         Flux<Tuple2<Long, Integer>> valueIndex = Flux.range(1, 10).index();
 
-        // handle: 任意转换, 单个值/多个值/异常
+        // handle: 任意转换, 单个值/多个值/异常. 更加灵活
         Mono<String> handleMap = Mono.just(1).handle((integer, synchronousSink) -> synchronousSink.next("a")).cast(String.class);
+
+        // startWith
+        Flux.range(1, 10).startWith(0);
 
         // flatMap: 扁平多个publisher
         Mono<Integer> flatMap = Mono.just(1).flatMap(i -> Mono.just(i * i));
@@ -675,6 +611,12 @@ public class ReactorCoreSpec {
         // 代替空序列
         Mono.empty().defaultIfEmpty("defaultIfEmpty").subscribe(System.out::println);
         Mono.empty().switchIfEmpty(Mono.just("defaultIfEmpty")).subscribe(System.out::println); // 使用默认的publisher代替
+
+        //  Mono<Void>导致后续操作没生效, then()会返回Mono.empty
+        Mono.empty().zipWith(Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); // 没有序列不会触发zipWith
+        Mono.empty().zipWhen(o -> Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); //没有序列不会触发zipWhen
+        Mono.just(1).then().zipWhen(o -> Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); //没有序列不会触发zipWhen
+        Mono.empty().defaultIfEmpty(0).zipWith(Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); // 触发zipWith
     }
 
     /**
@@ -758,7 +700,7 @@ public class ReactorCoreSpec {
         Flux.just(1).then(Mono.error(new RuntimeException()))
                 .onErrorReturn(2) // catch后返回默认值
                 // .onErrorResume(error -> Mono.just(3)) // catch后返回默认publisher(其他计算)
-                 .onErrorMap(Exceptions::propagate)  // 将异常进行转换, 可以使用Exceptions对异常进行包装
+                .onErrorMap(Exceptions::propagate)  // 将异常进行转换, 可以使用Exceptions对异常进行包装
                 .doFinally(signalType -> System.out.println("finally type: " + signalType)) // finally代码块, 能获取到序列是如何完成的
                 .subscribe(System.out::println);
         // using: try-with-resource
@@ -770,21 +712,117 @@ public class ReactorCoreSpec {
      * 基于时间的操作
      */
     @Test
-    public void time() throws IOException {
+    public void timeAndDelay() throws IOException {
         // elapsed: 当前消息距离上个消息过去的时间, 单位ms
-        Flux.interval(Duration.ofSeconds(1)).elapsed().subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+        Flux.interval(Duration.ofSeconds(1)).elapsed().take(2).subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
         // timestamp: 带上每个消息产生的时间戳
-        Flux.interval(Duration.ofSeconds(1)).timestamp().subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+        Flux.interval(Duration.ofSeconds(1)).timestamp().take(2).subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+
+        // delay: 延时发射
+        Mono.just("delayElement").delayElement(Duration.ofSeconds(2)).subscribe(System.out::println);
 
         // delaySubscription: 延时订阅
-        Flux.range(1, 10).delaySubscription(Duration.ofSeconds(5)).subscribe(System.out::print);
-        System.in.read();
+        Mono.just("delaySubscription").delaySubscription(Duration.ofSeconds(2)).subscribe(System.out::println);
+
+        // timout: 指定序列发射的超时
+        Mono.just("delayElement-timeout").delayElement(Duration.ofSeconds(2)).timeout(Duration.ofSeconds(1)).doOnError(System.out::println).subscribe(System.out::println);
 
         // defer: lazy特性
+
+        System.in.read();
     }
 
+    /**
+     * 序列转成窗口: Flux<T> -> Flux<Flux<T>>.
+     * - 窗口生成维度
+     * 1. 元素个数
+     * 2. 时间
+     * 3. 个数/时间
+     * 4. 元素的条件
+     * - n窗口重叠现象(适用于滑动窗口): 窗口宽度>两个窗口的间隔, 则会出现部分数据在两个窗口中. 窗口宽度>>两个窗口的间隔, 会同时存在很多窗口
+     */
     @Test
-    public void splitting() {
+    public void splitWindow() throws IOException {
+        BaseSubscriber<Flux<Integer>> windowSubscribe = new BaseSubscriber<Flux<Integer>>() {
 
+            @Override
+            protected void hookOnNext(Flux<Integer> value) {
+                value.subscribe(new BaseSubscriber<Integer>() {
+                    @Override
+                    protected void hookOnSubscribe(Subscription subscription) {
+                        System.out.println("Start window");
+                        subscription.request(Long.MAX_VALUE);
+                    }
+
+                    @Override
+                    protected void hookOnNext(Integer value) {
+                        System.out.println(value);
+                    }
+
+                    @Override
+                    protected void hookOnComplete() {
+                        System.out.println(String.format("Finish window"));
+                    }
+                });
+            }
+        };
+
+        // maxSize: 单个窗口的宽度. skip: 两个窗口的数量间隔.
+        // Flux.range(1, 100).window(10).subscribe(windowSubscribe);
+        // Flux.range(1, 100).window(10, 5).subscribe(windowSubscribe);
+
+        // windowingTimespan:单个窗口的宽度,  openWindowEvery: 两个窗口的时间间隔
+        // Flux.interval(Duration.ofMillis(100)).map(Long::intValue).window(Duration.ofSeconds(1)).subscribe(windowSubscribe);
+        // Flux.interval(Duration.ofMillis(100)).map(Long::intValue).window(Duration.ofSeconds(1), Duration.ofMillis(500)).subscribe(windowSubscribe);
+
+        // windowTimeout: window大小满足指定个数/指定时间
+        Flux.interval(Duration.ofMillis(100)).map(Long::intValue).windowTimeout(9, Duration.ofSeconds(1)).subscribe(windowSubscribe);
+
+        // windowUntil: 基于条件的窗口. todo
+        System.in.read();
+    }
+
+    /**
+     * Flux<T> -> Flux<List<T>> request(2)表示每次请求两个buffer
+     * buffer和window类似:
+     * 1. size维度buffer
+     * 2. 时间维度buffer
+     * 3. size/时间维度
+     * 4. 条件判断维度
+     */
+    @Test
+    public void splitBuffer() {
+        Flux.interval(Duration.ofMillis(100)).buffer(10);
+        Flux.interval(Duration.ofMillis(100)).buffer(Duration.ofSeconds(1));
+        Flux.interval(Duration.ofMillis(100)).bufferTimeout(10, Duration.ofSeconds(1));
+        Flux.interval(Duration.ofMillis(100)).bufferUntil(aLong -> aLong < 100);
+    }
+
+    /**
+     * groupBy返回: Flux<GroupedFlux<K, T>>
+     */
+    @Test
+    public void splitGroupBy() {
+        Flux.just(1, 3, 5, 2, 4, 6, 11, 12, 13)
+                .groupBy(i -> i % 2 == 0 ? "even" : "odd")
+                .subscribe(new BaseSubscriber<GroupedFlux<String, Integer>>() {
+                    @Override
+                    protected void hookOnNext(GroupedFlux<String, Integer> value) {
+                        value.map(String::valueOf).startWith(value.key()).subscribe(System.out::println);
+                    }
+                });
+    }
+
+    /**
+     * 同步获取所有序列. 阻塞式流处理
+     * - block
+     * - toIterator / toStream
+     * -  toFuture
+     */
+    @Test
+    public void publisherToBlock() {
+        Mono.defer(() -> Mono.just(1)).block();
+        Flux.range(1, 100).toIterable();
+        Mono.just(2).toFuture();
     }
 }
