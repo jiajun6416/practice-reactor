@@ -461,11 +461,6 @@ public class ReactorCoreSpec {
         Flux<String> composeFlux = Flux.just("blue", "green", "orange", "purple").transformDeferred(filterAndMap);
         composeFlux.subscribe(System.out::println);
         composeFlux.subscribe(System.out::println);
-
-        // windowing: 可以用来实现metric
-        System.out.println("--------------------------------");
-        Flux.range(1, 10).window(5).concatMap(integerFlux -> Mono.just(integerFlux.toStream().map(String::valueOf).collect(Collectors.joining(",")))).subscribe(System.out::println);
-        // buffer
     }
 
     /**
@@ -597,12 +592,14 @@ public class ReactorCoreSpec {
         // 计数
         Mono<Long> fluxCount = Flux.range(1, 100).count();
 
-        // 合并publisher: concat
+        // 合并publisher: concat, 按照顺序分别运行，flux1运行完成以后再运行flux2
         Flux.concat(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)).subscribe(System.out::print);
+        Flux.range(1, 10).concatMap(integer -> Flux.range(1, integer)).subscribe(System.out::print); // 等同于Map+concat
         Flux.concatDelayError(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)); // delayError:等所有的合并完成后再丢Error
 
-        // 合并publisher: merge
-        Flux.merge(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)).subscribe(System.out::print);// 按照发射顺序合并
+        // 合并publisher: merge,同时运行，根据时间先后运行, 会出现混合
+        Flux.merge(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10))
+                .subscribe(System.out::print);// 按照发射顺序合并
         Flux.mergeSequential(Flux.range(1, 10), Flux.range(10, 10), Flux.range(20, 10)); // sequential: 按照订阅的顺序合并?
 
         // zip: 将多个元素打包成 返回Tuple
@@ -824,5 +821,6 @@ public class ReactorCoreSpec {
         Mono.defer(() -> Mono.just(1)).block();
         Flux.range(1, 100).toIterable();
         Mono.just(2).toFuture();
+        Mono.just(1).then(); // then: 等待mono结束
     }
 }
