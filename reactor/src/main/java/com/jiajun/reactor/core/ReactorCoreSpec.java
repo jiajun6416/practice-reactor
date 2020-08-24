@@ -484,34 +484,42 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * context是不可变map, 每次修改都会重新创建一个context
-     * context是个单独的序列, 其顺序是从下到上
+     * https://juejin.im/post/6844903576888836109
+     * Mono.subscriberContext(): 创建一个context, 绑定在链路上
+     *  - ctx的创建是自下而上
+     * mono.subscriberContext(ctx->): 获取链路上的ctx
+     * 从下到上: subscriberContext之前的操作符能获取到context
+     * 不可变: context是不可变map, Mono.subscriberContext()
+     * 和Subscriber绑定: Context与作用链上的每个Subscriber绑定
      */
     @Test
     public void context() {
+        //
         Mono.just("a")
                 .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + s))
-                .subscriberContext(ctx -> ctx.put("key1", "context1")) // 将context绑定到链路上
-                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s))
-                .subscribe(System.out::println);
-        Flux.range(1, 10)
-                .map(i -> i + "1")
-                .subscriberContext(context -> context)
-                .map(i -> i + "2")
-                .subscribe(System.out::println);
-
-        Mono.just(1)
-                .flatMap(i -> Mono.subscriberContext().map(cxt -> i + "" + cxt.get("key1")))
-                .subscriberContext(ctx -> ctx.put("key1", "1")) // 将context绑定到链路上
-                .map(i -> i + "2")
+                .subscriberContext(ctx -> ctx.put("key1", "context2"))
+                .subscriberContext(ctx -> ctx.put("key1", "context1"))
+                //.flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s))
                 .subscribe(System.out::println);
 
         // 使用Zip将Context合并在序列中
-        Mono<String> mono = Mono.just("a").zipWith(Mono.subscriberContext()).map(tuple -> {
-            Optional<Object> userOptional = tuple.getT2().getOrEmpty("uid");
-            return userOptional.map(o -> "loginUser: " + o).orElse("un login");
-        });
-        mono.subscriberContext(ctx -> ctx.put("uid", 10086)).subscribe(System.out::println);
+        Mono<String> loginMono = Mono.just("a")
+                .zipWith(Mono.subscriberContext())
+                .map(tuple -> {
+                    Optional<Object> userOptional = tuple.getT2().getOrEmpty("uid");
+                    return userOptional.map(o -> "loginUser: " + o).orElse("un login");
+                });
+        Mono<String> loginUserWithCtx = loginMono.subscriberContext(ctx -> ctx.put("uid", 10086));
+        loginUserWithCtx.subscribe(System.out::println);
+        loginUserWithCtx.subscribe(System.out::println);
+        loginMono.subscriberContext(ctx -> ctx.put("uid", 10001)).subscribe(System.out::println);
+
+        // 不可变性
+        Mono.just("a")
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + cxt.get("key2")))
+                .subscriberContext(ctx -> ctx.put("key2", "context2"))
+                .subscriberContext(ctx -> ctx.put("key1", "context1"))
+                .subscribe(System.out::println);
     }
 
     /**

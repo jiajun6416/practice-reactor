@@ -40,16 +40,20 @@ public class Application implements WebFluxConfigurer {
             public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
                 ServerHttpRequest request = exchange.getRequest();
                 ServerHttpResponse response = exchange.getResponse();
-                // 写回json
-                response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                response.setStatusCode(HttpStatus.UNAUTHORIZED);
-                Mono<Void> result = response.writeWith(
-                        Mono.just(response.bufferFactory().wrap("{\"ret\":50,\"msg\":\"请登录\"}".getBytes()))
-                );
-
-                // 重定向
-                //response.setStatusCode(HttpStatus.FOUND);
-                //response.getHeaders().setLocation(URI.create("https://www.ximalaya.com"));
+                Mono<Void> result;
+                {
+                    // 写回json
+                    response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                    response.setStatusCode(HttpStatus.UNAUTHORIZED);
+                    result = response.writeWith(
+                            Mono.just(response.bufferFactory().wrap("{\"ret\":50,\"msg\":\"请登录\"}".getBytes()))
+                    );
+                }
+                {
+                    // 重定向
+                    //response.setStatusCode(HttpStatus.FOUND);
+                    //response.getHeaders().setLocation(URI.create("https://www.ximalaya.com"));
+                }
                 result = Mono.empty();
 
                 result = chain.filter(exchange).subscriberContext(ctx -> ctx.put("uid", 1));
