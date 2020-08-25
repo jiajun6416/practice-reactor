@@ -17,6 +17,7 @@ import reactor.core.publisher.GroupedFlux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.context.Context;
 import reactor.util.function.Tuple2;
 import reactor.util.function.Tuple3;
 
@@ -484,42 +485,61 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * https://juejin.im/post/6844903576888836109
-     * Mono.subscriberContext(): 创建一个context, 绑定在链路上
-     *  - ctx的创建是自下而上
-     * mono.subscriberContext(ctx->): 获取链路上的ctx
-     * 从下到上: subscriberContext之前的操作符能获取到context
-     * 不可变: context是不可变map, Mono.subscriberContext()
-     * 和Subscriber绑定: Context与作用链上的每个Subscriber绑定
+     * **传播（Propagation） + 不可变性（immutability）**
+     * <p>
+     * 绑定: 操作.subscriberContext
+     * 读取: 静态方法Mono#subscriberContext, 只会读取最近(下面)的context
+     * 特性:
+     * - 绑定subscribe,基于Subscription传播, 由下往上
+     * - 不可变性: context每次修改都会返回一个新对象(put会把之前的内容putAll新context对象), subscriberContext对context的修改是不会互相影响的
      */
     @Test
     public void context() {
-        //
-        Mono.just("a")
-                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + s))
-                .subscriberContext(ctx -> ctx.put("key1", "context2"))
-                .subscriberContext(ctx -> ctx.put("key1", "context1"))
-                //.flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s))
-                .subscribe(System.out::println);
+        String key = "key1";
+        // 绑定context: 这样每个操作符(Reactor内置的操作符)都可以访问, 本质是基于`Subscription`的传播特性实现(从subscribe往上)
+        Flux.range(1, 10).subscriberContext(ctx -> ctx.put(key, "context1")).subscribe();
 
-        // 使用Zip将Context合并在序列中
-        Mono<String> loginMono = Mono.just("a")
+        // 不可变性: Context#put每次都会返回一个新的Context对象, 并且把之前Context中的内容copy进新的context中
+        // 由于每次修改都是返回一个新的Context, 所以subscriberContext是不会互相影响的
+        Flux.range(1, 2)
+                .subscriberContext(origin -> {
+                    System.out.println(System.identityHashCode(origin));
+                    Context after = origin.put(key, "context1");
+                    System.out.println(System.identityHashCode(after));
+                    return after;
+                })
+                .subscribe(System.out::print);
+
+        // 读取context
+        // Mono#subscriberContext. 由于由下而上+不可变性(每次变动都是新对象), 在绑定context后面的操作符是获取不到context的
+        Mono.just("a")
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + s)) // 读取
+                .subscriberContext(ctx -> ctx.put("key1", "context1"))
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s)) // 读取不到
+                .subscribe(System.out::println);
+        Mono.just("a")
                 .zipWith(Mono.subscriberContext())
                 .map(tuple -> {
                     Optional<Object> userOptional = tuple.getT2().getOrEmpty("uid");
                     return userOptional.map(o -> "loginUser: " + o).orElse("un login");
-                });
-        Mono<String> loginUserWithCtx = loginMono.subscriberContext(ctx -> ctx.put("uid", 10086));
-        loginUserWithCtx.subscribe(System.out::println);
-        loginUserWithCtx.subscribe(System.out::println);
-        loginMono.subscriberContext(ctx -> ctx.put("uid", 10001)).subscribe(System.out::println);
-
-        // 不可变性
-        Mono.just("a")
-                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + cxt.get("key2")))
-                .subscriberContext(ctx -> ctx.put("key2", "context2"))
-                .subscriberContext(ctx -> ctx.put("key1", "context1"))
+                }).subscriberContext(ctx -> ctx.put("uid", 10086))
                 .subscribe(System.out::println);
+
+        // 只能读取到离当前操作符最近(下面)的context. 记住由于context的不可变性, 每次subscriberContext不会影响之前的subscriberContext
+        Mono.just("Hello")
+                .flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取第二次赋值: hello Reactor
+                .subscriberContext(ctx -> ctx.put(key, "Reactor")) // 第二次赋值(`不会影响`)
+                .flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取第一次赋值: hello Reactor World
+                .subscriberContext(ctx -> ctx.put(key, "World")) // 第一次赋值
+                .subscribe(System.out::print); // Hello Reactor World
+
+        // 内部Context和外部隔离
+        Mono.just("Hello").flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取到的Context还是 外部context
+                .flatMap(s ->
+                        Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key)).subscriberContext(ctx -> ctx.put(key, "Reactor")) // 内部Context不影响外部
+                )
+                .subscriberContext(ctx -> ctx.put(key, "World")) // 外部context
+                .subscribe(System.out::print); // Hello World Reactor
     }
 
     /**
