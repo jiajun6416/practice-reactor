@@ -6,16 +6,18 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+import java.util.Optional;
+
 /**
  * @author jiajun
  */
 @RestController
-@RequestMapping("hello")
-public class HelloController {
+@RequestMapping("webflux")
+public class HelloWebfluxController {
 
     @GetMapping("get/{ts}")
-    public Object simpleGet(@PathVariable String ts) {
-        return "hello webflux: " + ts;
+    public Mono<Object> simpleGet(@PathVariable String ts) {
+        return Mono.just(Optional.of("hello webflux: " + ts));
     }
 
     @GetMapping("get2/{ts}")
