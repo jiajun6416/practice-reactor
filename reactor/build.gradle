@@ -6,6 +6,7 @@ dependencies {
     implementation platform('io.projectreactor:reactor-bom:2020.0.0-M1')
 
     implementation 'io.projectreactor:reactor-core'
+    implementation 'io.projectreactor.addons:reactor-extra'
     implementation 'io.projectreactor:reactor-test'
     implementation 'com.jiajun:practice-common:1.0.0'
 }

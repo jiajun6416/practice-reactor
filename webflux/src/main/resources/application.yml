@@ -1,3 +1,22 @@
 server:
-  servlet:
-    context-path: /mvc
+  port: 8080
+login-auth:
+  type: webflux_filter
+  app-name: talent-web
+  context-path: /talent-web
+mainstay:
+  application:
+    name: webflux-test
+  client-default:
+    max-connection-size: 5
+    io-size: 5
+    timeout: 1000
+  clients:
+    - iface: com.ximalaya.passport.sso.thrift.RemoteSessionService.FutureIface
+      group: passport-sso
+    - iface: com.ximalaya.service.profile.thrift.RemoteUserInfoQueryService.FutureIface
+      group: profile-proxy
+    - iface: com.ximalaya.track.cell.api.thrift.TrackCellProxyService.FutureIface
+      group: track-cell-proxy
+    - iface: com.ximalaya.service.album.api.thrift.IAlbumFacadeHandler.FutureIface
+      group: album

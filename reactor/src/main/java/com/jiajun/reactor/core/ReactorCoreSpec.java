@@ -11,10 +11,7 @@ import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import reactor.core.Disposable;
 import reactor.core.Exceptions;
-import reactor.core.publisher.BaseSubscriber;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.GroupedFlux;
-import reactor.core.publisher.Mono;
+import reactor.core.publisher.*;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.context.Context;
@@ -52,6 +49,11 @@ public class ReactorCoreSpec {
         Flux<Integer> flux3 = Flux.range(1, 10);
         Mono<String> emptyMono = Mono.empty();
         Mono<String> mono1 = Mono.just("foo");
+
+        // flux to mono
+        Mono<List<Integer>> flux2Mono = Flux.range(1, 10).collect(Collectors.toList());
+        // mono to flux
+        Flux<String> mono2Flux = Mono.just("hello").concatWith(Mono.just(" reactor"));
     }
 
     /**
@@ -124,7 +126,7 @@ public class ReactorCoreSpec {
 
     /**
      * 使用BaseSubscriber代替Lambda的subscribe方式, BaseSubscriber包含了Lambda订阅和Disposable的所有功能
-     * 同一个BaseSubscriber实例不能同时subscribe多个publisher, 订阅第二个会把取消第一个的订阅状态
+     * 同一个BaseSubscriber实例不能同时subscribe多个publisher, 订阅第二个会取消第一个的订阅状态
      */
     @Test
     public void baseSubscriber() {
@@ -134,13 +136,13 @@ public class ReactorCoreSpec {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
                 System.out.println("onSubscribe");
-                subscription.request(1);
+                subscription.request(10);
             }
 
             @Override
             protected void hookOnNext(Integer value) {
                 System.out.println(value);
-                request(1);
+                // request(1);
             }
 
             @Override
@@ -173,21 +175,21 @@ public class ReactorCoreSpec {
     }
 
     /**
-     *
+     * 除在Subscribe中控制消费, 还能在中间操作符控制消费的数量和速率
+     * limitRequest: 每个Subscribe只能获取n个元素
+     * limitRate: 每个Subscribe的消费速率
      */
     @Test
-    public void limit() {
+    public void limitAndLimitRate() {
         // limitRequest: 标示只消费x个
         Flux.range(10, 10).limitRequest(5).subscribe(System.out::println);
-
-        Flux.range(10, 100).limitRate(5).subscribe(System.out::println);
         System.out.println("------------------");
 
         // 流控, limitRate: push的数量
-        Flux.range(10, 10).limitRate(4, 2).subscribe(new BaseSubscriber<Integer>() {
+        Flux.range(10, 20).limitRate(4).subscribe(new BaseSubscriber<Integer>() {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
-                subscription.request(8);
+                subscription.request(10);
             }
 
             @Override
@@ -243,32 +245,37 @@ public class ReactorCoreSpec {
      * 1. 支持异步, 可以一次产生多个元素
      * 2. 将回调模式转成响应式
      * 3. 支持控制回压
-     * <p>
-     * 1.
      */
     @Test
     public void create() {
         SettableFuture<String> future = SettableFuture.create();
         Flux<String> flux = Flux.create(fluxSink ->
-                future.addCallback(new FutureCallback<String>() {
-                    @Override
-                    public void onSuccess(@Nullable String result) {
-                        // 每轮支持发射多个, 并且可以是不同的线程
-                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + result)).start();
-                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + result)).start();
-                    }
+                        future.addCallback(new FutureCallback<String>() {
+                            @Override
+                            public void onSuccess(@Nullable String result) {
+                                String threadName = Thread.currentThread().getName();
+                                // 每轮支持发射多个, 并且可以是不同的线程
+                                new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
+                                new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
+                                fluxSink.onRequest(num -> System.out.println("consumer nums: " + num)); // onRequest回调
+                            }
 
-                    @Override
-                    public void onFailure(Throwable t) {
-                        fluxSink.error(t);
-                    }
-                }, MoreExecutors.directExecutor())
+                            @Override
+                            public void onFailure(Throwable t) {
+                                fluxSink.error(t);
+                            }
+                        }, MoreExecutors.directExecutor()),
+                FluxSink.OverflowStrategy.BUFFER // 回压策略, 默认是缓存起来
         );
         flux.subscribe(System.out::println);
 
         future.set("a");
     }
 
+    /**
+     * push: sink#next不存在并发调用清空下使用, 通常是同一个线程产生数据的场景.
+     * 和create的区别: create支持并发调用sink#next, 底层通过锁保证数据安全, 但是push没有.
+     */
     @Test
     public void push() {
         SettableFuture<String> future = SettableFuture.create();
@@ -276,10 +283,9 @@ public class ReactorCoreSpec {
                 future.addCallback(new FutureCallback<String>() {
                     @Override
                     public void onSuccess(@Nullable String result) {
-                        // 每轮支持发射多个, 并且可以是不同的线程
-                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + result)).start();
-                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + result)).start();
-                        new Thread(fluxSink::complete).start();
+                        String threadName = Thread.currentThread().getName();
+                        // push: 并发的调用next会有问题
+                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
                     }
 
                     @Override
@@ -298,7 +304,9 @@ public class ReactorCoreSpec {
      */
     @Test
     public void hybridPushAndPull() {
-        Flux<String> flux = Flux.create(fluxSink -> fluxSink.onRequest(n -> fluxSink.next("obtain source..." + n)));
+        Flux<String> flux = Flux.create(fluxSink ->
+                fluxSink.onRequest(n -> fluxSink.next("obtain source..." + n)) // 此时可以调用远程服务, 即相当于pull模型
+        );
         flux.subscribe(new BaseSubscriber<String>() {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
@@ -313,40 +321,41 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * 线程模型
+     * Scheduler: 线程模型
+     * publishOn: 指定发射的线程
+     * subscribeOn: 指定subscribe的线程(常用)
      */
     @Test
-    public void threadModel() throws InterruptedException {
+    public void scheduler() throws InterruptedException {
         // single 线程
         Flux.interval(Duration.ofSeconds(1), Schedulers.newSingle("interval", false)).subscribe(System.out::println);
 
-        // publishOn: 指定之后操作使用的线程
-        Flux<String> flux = Flux.range(10, 10)
+        // publishOn: 指定之后操作使用的线程, 如果subscribe和publish是一个线程, 则subscribe的线程也会改变
+        Flux<String> flux = Flux.just(1)
                 .map(i -> {
                     System.out.println("map1 thread: " + Thread.currentThread().getName());
                     return 10 + i;
                 })
-                .publishOn(Schedulers.newParallel("custom-executor"))
+                .publishOn(Schedulers.newParallel("custom1-executor"))
                 .map(i -> {
                     System.out.println("map2 thread: " + Thread.currentThread().getName());
                     return "value: " + i;
                 });
-        //new Thread((flux::subscribe)).start();
+        //new Thread(() -> flux.subscribe(s -> System.out.println("subscribe thread: " + Thread.currentThread().getName()))).start();
 
-        // subscribeOn: 指定subscriber的线程, 但是只有subscriber才会触发publisher的计算, 所以操作线程一般都是subscriber线程, 此时会同时被指定.
-        // subscribeOn: 和放置顺序无关
-        Flux<String> flux2 = Flux.range(10, 10)
-                .map(i -> {
-                    System.out.println("map1 thread: " + Thread.currentThread().getName());
-                    return 10 + i;
-                })
-                .subscribeOn(Schedulers.newParallel("custom-executor"))
+        Mono<Integer> mono = Mono.create(sink -> new Thread(() -> sink.success(1)).start());
+        mono.map(i -> {
+            System.out.println("map1 thread: " + Thread.currentThread().getName());
+            return 10 + i;
+        }).subscribeOn(Schedulers.newParallel("custom2-executor"))
                 .map(i -> {
                     System.out.println("map2 thread: " + Thread.currentThread().getName());
                     return "value: " + i;
                 });
         // 无论在什么线程中订阅的, 都会转移到subscribeOn指定的线程
-        new Thread((flux2::subscribe)).start();
+        new Thread(() -> mono.subscribe(s -> System.out.println("subscribe thread: " + Thread.currentThread().getName()))).start();
+        // subscribeOn: 指定subscriber的线程, 但是只有subscriber才会触发publisher的计算, 所以操作线程一般都是subscriber线程, 此时会同时被指定.
+        // subscribeOn: 和放置顺序无关
 
         TimeUnit.SECONDS.sleep(1);
     }
@@ -362,19 +371,20 @@ public class ReactorCoreSpec {
     @Test
     public void errorHandler() throws InterruptedException {
         Function<Integer, Integer> errorFunction = value -> value / (value - 5);
+        Function<Long, Long> errorFunction2 = value -> value / (value - 5);
 
         // subscriber中onError, 此时订阅结束
         Flux.range(1, 10).map(errorFunction).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getMessage()));
         System.out.println("--------------------------------");
-        // onErrorReturn: 订阅同样会结束掉
+        // onErrorReturn: 不触发error, 但是订阅同样会结束掉
         Flux.range(1, 10).map(errorFunction).onErrorReturn(110).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getMessage()));
         System.out.println("--------------------------------");
         Flux.range(1, 10).map(errorFunction).onErrorReturn(e -> e instanceof ArithmeticException, 110).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getClass().getName()));
-        // onErrorResume: 订阅同样会结束掉
+        // onErrorResume: 不触发error, 订阅同样会结束掉
         System.out.println("--------------------------------");
         Flux.range(1, 10).map(errorFunction).onErrorResume(e -> Mono.just(110)).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getMessage()));
 
-        // 转换异常: 通过构建一个error的publisher 或 onErrorMap
+        // 转换异常: 通过构建一个error的publisher 或 onErrorMap.(通常是推荐该方式)
         System.out.println("--------------------------------");
         Flux.range(1, 10).map(errorFunction).onErrorResume(e -> Mono.error(new RuntimeException(e))).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getMessage())); // 通过map
         Flux.range(1, 10).map(errorFunction).onErrorMap(RuntimeException::new).subscribe(System.out::println, error -> System.out.println("catch error: " + error.getMessage()));
@@ -385,7 +395,7 @@ public class ReactorCoreSpec {
         System.out.println("--------------------------------");
         // using: try-with-resource, 用作资源回收
         Flux.using(
-                () -> new BufferedReader(new InputStreamReader(new FileInputStream("/script/tbj"))),
+                () -> new BufferedReader(new InputStreamReader(new FileInputStream("/etc/hosts"))),
                 bufferedReader -> Flux.generate(sink -> {
                     String line = null;
                     try {
@@ -415,32 +425,19 @@ public class ReactorCoreSpec {
 
         // retry: 重订阅, 会再从头开始处理, retry(n)表示重订阅n次, 如果n次后还失败再丢出异常
         System.out.println("--------------------------------");
-        Flux.interval(Duration.ofMillis(250))
-                .map(input -> {
-                    if (input < 3) return "tick " + input;
-                    throw new RuntimeException("boom");
-                })
-                .retry(1)
-                .subscribe(System.out::println, System.err::println);
+        Flux.interval(Duration.ofMillis(250)).map(errorFunction2).retry(1)
+                .subscribe(System.out::println, System.out::print);
 
         Thread.sleep(2100);
 
         // Exceptions: 对异常进行包装后传递
         System.out.println("--------------------------------");
-        Flux.range(1, 10).map(i -> {
-            try {
-                if (i > 4) {
-                    throw new IOException("too large");
-                }
-                return i;
-            } catch (IOException e) {
-                throw Exceptions.propagate(e);
-            }
-        }).subscribe(System.out::println, e -> System.out.println(Exceptions.unwrap(e)));
+        Flux.range(1, 10).map(errorFunction).onErrorMap(Exceptions::propagate).subscribe(System.out::println, e -> System.out.println(Exceptions.unwrap(e)));
     }
 
     /**
-     * transform: 将操作链上动作外置
+     * transform: 将操作连当成一个变量外置
+     * transform+deferred: 延迟操作连, 可以实现同一个流使用不同的操作连
      */
     @Test
     public void transform() {
@@ -487,10 +484,10 @@ public class ReactorCoreSpec {
     /**
      * **传播（Propagation） + 不可变性（immutability）**
      * <p>
-     * 绑定: 操作.subscriberContext
+     * 绑定: 操作.subscriberContext(ctx->)
      * 读取: 静态方法Mono#subscriberContext, 只会读取最近(下面)的context
      * 特性:
-     * - 绑定subscribe,基于Subscription传播, 由下往上
+     * - 绑定subscribe,基于Subscription传播(由下往上)
      * - 不可变性: context每次修改都会返回一个新对象(put会把之前的内容putAll新context对象), subscriberContext对context的修改是不会互相影响的
      */
     @Test
@@ -517,6 +514,13 @@ public class ReactorCoreSpec {
                 .subscriberContext(ctx -> ctx.put("key1", "context1"))
                 .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s)) // 读取不到
                 .subscribe(System.out::println);
+
+        // Mono.subscriberContext()返回的是Mono, 使用的时候必须使用flat. 使用flatMap或者zipWith
+        Mono.just("a")
+                .flatMap(it -> Mono.subscriberContext().map(ctx -> ctx.getOrEmpty("uid").map(uid -> "loginUser: " + uid).orElse("un login")))
+                .subscriberContext(context -> context.put("uid", 10086))
+                .subscribe(System.out::println);
+
         Mono.just("a")
                 .zipWith(Mono.subscriberContext())
                 .map(tuple -> {
@@ -528,10 +532,10 @@ public class ReactorCoreSpec {
         // 只能读取到离当前操作符最近(下面)的context. 记住由于context的不可变性, 每次subscriberContext不会影响之前的subscriberContext
         Mono.just("Hello")
                 .flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取第二次赋值: hello Reactor
-                .subscriberContext(ctx -> ctx.put(key, "Reactor")) // 第二次赋值(`不会影响`)
+                .subscriberContext(ctx -> ctx.put(key, "Reactor")) // 读取不到
                 .flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取第一次赋值: hello Reactor World
-                .subscriberContext(ctx -> ctx.put(key, "World")) // 第一次赋值
-                .subscribe(System.out::print); // Hello Reactor World
+                .subscriberContext(ctx -> ctx.put(key, "World")) // 第一次赋值, 返回一个新的context
+                .subscribe(System.out::println); // Hello Reactor World
 
         // 内部Context和外部隔离
         Mono.just("Hello").flatMap(s -> Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key))) // 读取到的Context还是 外部context
@@ -539,7 +543,7 @@ public class ReactorCoreSpec {
                         Mono.subscriberContext().map(ctx -> s + " " + ctx.get(key)).subscriberContext(ctx -> ctx.put(key, "Reactor")) // 内部Context不影响外部
                 )
                 .subscriberContext(ctx -> ctx.put(key, "World")) // 外部context
-                .subscribe(System.out::print); // Hello World Reactor
+                .subscribe(System.out::println); // Hello World Reactor
     }
 
     /**
@@ -558,7 +562,6 @@ public class ReactorCoreSpec {
         Flux.fromIterable(() -> Arrays.asList(1, 2, 3).iterator());
 
         // 异步结果
-        Mono.fromCallable(() -> 1);
         Mono.fromFuture(CompletableFuture.completedFuture(1));
 
         // 立即生成异常
@@ -576,6 +579,8 @@ public class ReactorCoreSpec {
                 });
 
         // 可编程生成: 支持异步
+        // Flux.push()
+
         Mono.create(
                 sink -> Futures.addCallback(SettableFuture.create(), new FutureCallback<Object>() {
                     @Override
@@ -600,11 +605,11 @@ public class ReactorCoreSpec {
         // 获取index
         Flux<Tuple2<Long, Integer>> valueIndex = Flux.range(1, 10).index();
 
-        // handle: 任意转换, 单个值/多个值/异常. 更加灵活
+        // handle: 任意转换, 单个值/多个值/异常. 更加灵活. handle也是通过sink实现
         Mono<String> handleMap = Mono.just(1).handle((integer, synchronousSink) -> synchronousSink.next("a")).cast(String.class);
 
-        // startWith
-        Flux.range(1, 10).startWith(0);
+        // startWith: 从指定值开始的子序列
+        Flux.range(1, 10).startWith(5);
 
         // flatMap: 扁平多个publisher
         Mono<Integer> flatMap = Mono.just(1).flatMap(i -> Mono.just(i * i));
@@ -638,8 +643,10 @@ public class ReactorCoreSpec {
         Mono.empty().switchIfEmpty(Mono.just("defaultIfEmpty")).subscribe(System.out::println); // 使用默认的publisher代替
 
         //  Mono<Void>导致后续操作没生效, then()会返回Mono.empty
+        // then(): 丢弃结果, 只关心是否结束
         Mono.empty().zipWith(Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); // 没有序列不会触发zipWith
         Mono.empty().zipWhen(o -> Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); //没有序列不会触发zipWhen
+        Mono.just(100).zipWith(Mono.empty()).subscribe(tuple -> System.out.println(tuple.getT1())); //zipWith一个空序列同样不会触发subscribe
         Mono.just(1).then().zipWhen(o -> Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); //没有序列不会触发zipWhen
         Mono.empty().defaultIfEmpty(0).zipWith(Mono.just(1)).subscribe(tuple -> System.out.println(tuple.getT2())); // 触发zipWith
     }
@@ -678,12 +685,10 @@ public class ReactorCoreSpec {
 
         // 取一部分元素
         Flux.range(1, 10).take(20).subscribe(System.out::print); // 取前n个元素
-        System.out.println();
         Flux.range(1, 10).takeLast(20).subscribe(System.out::print); // 取最后n个元素
         Flux.range(1, 100).next(); // 取第一个元素放入mono
-        System.out.println();
+
         Flux.just(1, 5, 6, 3, 4).takeUntil(i -> i > 5).subscribe(System.out::print); // 满足条件后不再take
-        System.out.println();
         Flux.just(1, 5, 6, 3, 4).takeWhile(i -> i <= 5).subscribe(System.out::print); // 只要不满足条件即不再take
 
         // 只取一个元素
@@ -739,9 +744,9 @@ public class ReactorCoreSpec {
     @Test
     public void timeAndDelay() throws IOException {
         // elapsed: 当前消息距离上个消息过去的时间, 单位ms
-        Flux.interval(Duration.ofSeconds(1)).elapsed().take(2).subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+        Flux.interval(Duration.ofSeconds(1)).elapsed().take(10).subscribe(tuple -> System.out.println("ts1: " + tuple.getT1() + ", value1: " + tuple.getT2()));
         // timestamp: 带上每个消息产生的时间戳
-        Flux.interval(Duration.ofSeconds(1)).timestamp().take(2).subscribe(tuple -> System.out.println("ts: " + tuple.getT1() + ", value: " + tuple.getT2()));
+        Flux.interval(Duration.ofSeconds(1)).timestamp().take(10).subscribe(tuple -> System.out.println("ts2: " + tuple.getT1() + ", value2: " + tuple.getT2()));
 
         // delay: 延时发射
         Mono.just("delayElement").delayElement(Duration.ofSeconds(2)).subscribe(System.out::println);
@@ -753,6 +758,19 @@ public class ReactorCoreSpec {
         Mono.just("delayElement-timeout").delayElement(Duration.ofSeconds(2)).timeout(Duration.ofSeconds(1)).doOnError(System.out::println).subscribe(System.out::println);
 
         // defer: lazy特性
+
+        // timeout: 底层使用的ScheduledService, 延时队列DelayQueue
+        CompletableFuture<Integer> future = new CompletableFuture<>();
+        Mono.fromFuture(future)
+                .timeout(Duration.ofSeconds(1), Mono.just(2))
+                .subscribe(System.out::println, Throwable::printStackTrace);
+        new Thread(() -> {
+            try {
+                TimeUnit.SECONDS.sleep(2);
+                future.complete(1);
+            } catch (InterruptedException e) {
+            }
+        }).start();
 
         System.in.read();
     }
@@ -819,7 +837,7 @@ public class ReactorCoreSpec {
     public void splitBuffer() {
         Flux.interval(Duration.ofMillis(100)).buffer(10);
         Flux.interval(Duration.ofMillis(100)).buffer(Duration.ofSeconds(1));
-        Flux.interval(Duration.ofMillis(100)).bufferTimeout(10, Duration.ofSeconds(1));
+        Flux.interval(Duration.ofMillis(100)).bufferTimeout(10, Duration.ofSeconds(1)); // 十个或者1s
         Flux.interval(Duration.ofMillis(100)).bufferUntil(aLong -> aLong < 100);
     }
 
@@ -833,7 +851,8 @@ public class ReactorCoreSpec {
                 .subscribe(new BaseSubscriber<GroupedFlux<String, Integer>>() {
                     @Override
                     protected void hookOnNext(GroupedFlux<String, Integer> value) {
-                        value.map(String::valueOf).startWith(value.key()).subscribe(System.out::println);
+                        System.out.println(value.key());
+                        System.out.println(value.subscribe(System.out::print));
                     }
                 });
     }

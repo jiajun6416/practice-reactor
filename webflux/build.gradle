@@ -1,5 +1,14 @@
 dependencies {
     implementation platform('org.springframework.boot:spring-boot-dependencies:2.2.7.RELEASE')
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
-    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-tomcat'
+    implementation ('org.springframework.boot:spring-boot-starter-webflux') {
+        exclude module: 'spring-boot-starter-reactor-netty'
+    }
+    implementation 'com.ximalaya.common:auth-filter:1.10-RELEASE'
+    implementation 'com.ximalaya.userservice:common-mainstay-starter:1.0.19'
+    implementation 'com.ximalaya.mainstay:mainstay-all:3.0.22'
+    implementation 'com.ximalaya.service:profile-api:0.1.37-M3'
+    implementation 'com.ximalaya.track:track-cell-api:1.0.29'
+    implementation 'com.ximalaya.service:album-api:1.2.65'
+    implementation 'com.ximalaya.service:content-thrift-api:2.0.3'
 }
