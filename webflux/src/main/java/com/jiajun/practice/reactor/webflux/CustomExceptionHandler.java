@@ -8,8 +8,8 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
-import org.springframework.web.server.ServerWebInputException;
 
 import java.util.Optional;
 
@@ -25,7 +25,7 @@ public class CustomExceptionHandler {
     @ResponseBody
     @ExceptionHandler(Throwable.class)
     public Object handle(ServerWebExchange exchange, Throwable ex) {
-        if (ServerWebInputException.class.isInstance(ex)) {
+        if (ResponseStatusException.class.isInstance(ex)) {
             log.warn(ex.getMessage());
         } else {
             log.error(ex.getMessage(), ex);
