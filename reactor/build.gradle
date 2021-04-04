@@ -2,8 +2,13 @@ repositories {
     maven { url 'https://repo.spring.io/libs-snapshot' }
 }
 
+
+sourceCompatibility = JavaVersion.VERSION_11
+targetCompatibility = JavaVersion.VERSION_11
+
 dependencies {
     implementation platform('io.projectreactor:reactor-bom:2020.0.0-M1')
+    implementation project(':future-converter')
 
     implementation 'io.projectreactor:reactor-core'
     implementation 'io.projectreactor.addons:reactor-extra'

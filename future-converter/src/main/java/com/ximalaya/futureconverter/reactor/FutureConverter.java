@@ -1,4 +1,4 @@
-package com.ximalaya.futureconverter.mono;
+package com.ximalaya.futureconverter.reactor;
 
 import com.ximalaya.mainstay.common.InvokerHelper;
 import com.ximalaya.mainstay.common.MainstayTimeoutException;
@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  */
 public class FutureConverter {
 
-    public static <T> Mono<T> convert(Future<T> future, Function<Throwable, Throwable> function) {
+    public static <T> Mono<T> toMono(Future<T> future, Function<Throwable, Throwable> function) {
         return Mono.create(sink -> Futures.addCallback(future,
                 new FutureCallback<T>() {
                     @Override
@@ -38,7 +38,7 @@ public class FutureConverter {
                 }));
     }
 
-    public static <T> Mono<Optional<T>> convert(Future<T> future, FallbackFunction<Throwable, T> fallbackHandler) {
+    public static <T> Mono<Optional<T>> toMonoOptional(Future<T> future, Function<Throwable, Optional<T>> fallbackHandler) {
         return Mono.create(sink -> Futures.addCallback(future,
                 new FutureCallback<T>() {
                     @Override
@@ -57,7 +57,7 @@ public class FutureConverter {
                 }));
     }
 
-    public static <T> Mono<T> convert(Supplier<Future<T>> futureSupplier, Long endTime, Function<Throwable, Throwable> exHandler) {
+    public static <T> Mono<T> toMono(Supplier<Future<T>> futureSupplier, Long endTime, Function<Throwable, Throwable> exHandler) {
         long timeout = endTime - System.currentTimeMillis();
         if (timeout <= 0) {
             Exception timeoutException = new MainstayTimeoutException(" timeout [" + timeout + "] less then 0");
@@ -82,7 +82,7 @@ public class FutureConverter {
                 }));
     }
 
-    public static <T> Mono<Optional<T>> convert(Supplier<Future<T>> futureSupplier, Long endTime, FallbackFunction<Throwable, T> fallbackFunction) {
+    public static <T> Mono<Optional<T>> toMonoOptional(Supplier<Future<T>> futureSupplier, Long endTime, Function<Throwable, Optional<T>> fallbackFunction) {
         long timeout = endTime - System.currentTimeMillis();
         if (timeout <= 0) {
             Exception timeoutException = new MainstayTimeoutException(" timeout [" + timeout + "] less then 0");
@@ -105,10 +105,5 @@ public class FutureConverter {
                         }
                     }
                 }));
-    }
-
-    @FunctionalInterface
-    interface FallbackFunction<T, R> {
-        Optional<R> apply(T t);
     }
 }

@@ -15,7 +15,7 @@ import java.util.function.Supplier;
  */
 public class FutureConverter {
 
-    public static <T> CompletableFuture<T> convert(Future<T> future, Function<Throwable, Object> function) {
+    public static <T> CompletableFuture<T> toCompletableFuture(Future<T> future, Function<Throwable, Object> exceptionHandler) {
         CompletableFuture<T> completableFuture = new CompletableFuture<>();
         Futures.addCallback(future, new FutureCallback<T>() {
             @Override
@@ -25,8 +25,13 @@ public class FutureConverter {
 
             @Override
             public void onFailure(Throwable t) {
-                Object value = function.apply(t);
-                if (value != null && function instanceof Throwable) {
+                Object value = null;
+                try {
+                    value = exceptionHandler.apply(t);
+                } catch (Throwable e) {
+                    value = e;
+                }
+                if (value != null && value instanceof Throwable) {
                     completableFuture.completeExceptionally((Throwable) value);
                 } else {
                     completableFuture.complete((T) value);
@@ -36,21 +41,32 @@ public class FutureConverter {
         return completableFuture;
     }
 
-    public static <T> CompletableFuture<T> convert(Supplier<Future<T>> futureSupplier, long endTime, Function<Throwable, Object> function) {
+    public static <T> CompletableFuture<T> toCompletableFuture(Supplier<Future<T>> futureSupplier, long endTime, Function<Throwable, Object> exceptionHandler) {
         CompletableFuture<T> completableFuture = new CompletableFuture<>();
         long timeout = endTime - System.currentTimeMillis();
         if (timeout <= 0) {
             Exception t = new MainstayTimeoutException(" timeout [" + timeout + "] less then 0");
-            Object value = function.apply(t);
-            if (value != null && function instanceof Throwable) {
+            Object value = null;
+            try {
+                value = exceptionHandler.apply(t);
+            } catch (Throwable e) {
+                value = e;
+            }
+            if (value != null && value instanceof Throwable) {
                 completableFuture.completeExceptionally((Throwable) value);
             } else {
                 completableFuture.complete((T) value);
             }
             return completableFuture;
         }
-        InvokerHelper.setNcTimeout((int) timeout);
-        Futures.addCallback(futureSupplier.get(), new FutureCallback<T>() {
+        InvokerHelper.setNcTimeout((int) timeout); // 动态超时
+        Future<T> future = null;
+        try {
+            future = futureSupplier.get(); // 将非rpc异常转成future
+        } catch (Throwable e) {
+            future = Futures.immediateFailedFuture(e);
+        }
+        Futures.addCallback(future, new FutureCallback<T>() {
             @Override
             public void onSuccess(T result) {
                 completableFuture.complete(result);
@@ -58,8 +74,13 @@ public class FutureConverter {
 
             @Override
             public void onFailure(Throwable t) {
-                Object value = function.apply(t);
-                if (value != null && function instanceof Throwable) {
+                Object value = null;
+                try {
+                    value = exceptionHandler.apply(t);
+                } catch (Throwable e) {
+                    value = e;
+                }
+                if (value != null && value instanceof Throwable) {
                     completableFuture.completeExceptionally((Throwable) value);
                 } else {
                     completableFuture.complete((T) value);
