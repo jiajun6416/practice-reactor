@@ -1,17 +1,19 @@
 package com.jiajun.reactor.projectreactor;
 
-import com.alibaba.fastjson.JSON;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.MoreExecutors;
 import com.google.common.util.concurrent.SettableFuture;
+import com.google.common.util.concurrent.Uninterruptibles;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.Test;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import reactor.core.Disposable;
 import reactor.core.Exceptions;
-import reactor.core.publisher.*;
+import reactor.core.publisher.BaseSubscriber;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.GroupedFlux;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.context.Context;
@@ -57,7 +59,11 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * 使用Lambda方式进行Subscriber
+     * 使用Lambda方式进行Subscriber. 支持四个参数
+     * - item的Consumer
+     * - 错误处理, 错误后触发异常处理, 然后终止
+     * - 正常完成后回调
+     * - 返回Subscription: Subscription标识一个订阅状态, 可以指定request数量和取消订阅
      */
     @Test
     public void fluxLambdaSubscribe() {
@@ -65,7 +71,7 @@ public class ReactorCoreSpec {
                 System.out::print,
                 Throwable::printStackTrace,
                 () -> System.out.println("complete!"),
-                subscription -> subscription.request(20) // Subscription指定拉取的iterm数
+                subscription -> subscription.request(20) // Subscription指定拉取的item数
         );
 
         Flux.range(1, 10).subscribe(
@@ -100,67 +106,53 @@ public class ReactorCoreSpec {
     /**
      * Lambda方式订阅的话, 返回的Disposable (`可以被取消或者销毁`)
      * 通过Disposable可以取消订阅
-     * 如果消息处理的很快, 不保证能够cancel成功!
      */
     @Test
     public void disposable() {
-        // operator很快的话,则不一定能取消成功
-        Disposable disposable = Flux.just(1, 2, 3, 4).subscribe(System.out::println);
+        Disposable disposable = Flux.just(1, 2, 3, 4).subscribeOn(Schedulers.parallel()).subscribe(System.out::println);
         System.out.println(disposable.isDisposed());
         disposable.dispose();
         System.out.println(disposable.isDisposed());
-
-        System.out.println("------------");
-
-        Disposable disposable2 = Flux.just(1, 2, 3, 4).flatMap(integer -> {
-            try {
-                TimeUnit.SECONDS.sleep(1);
-            } catch (InterruptedException e) {
-            }
-            return Mono.just(integer);
-        }).subscribe(System.out::println);
-        System.out.println(disposable2.isDisposed());
-        disposable2.dispose();
-        System.out.println(disposable2.isDisposed());
     }
 
     /**
-     * 使用BaseSubscriber代替Lambda的subscribe方式, BaseSubscriber包含了Lambda订阅和Disposable的所有功能
-     * 同一个BaseSubscriber实例不能同时subscribe多个publisher, 订阅第二个会取消第一个的订阅状态
+     * BaseSubscriber包含了Lambda订阅和Disposable的所有功能
+     * 同一个BaseSubscriber实例不能订阅多个publisher, 否则订阅第二个会取消第一个的订阅状态
      */
     @Test
     public void baseSubscriber() {
         Flux<Integer> flux = Flux.range(1, 10);
-        flux.subscribe(new BaseSubscriber<Integer>() {
+        flux.subscribeOn(Schedulers.single()).subscribe(new BaseSubscriber<>() {
 
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
-                System.out.println("onSubscribe");
-                subscription.request(10);
+                System.out.println(Thread.currentThread().getName() + ":hookOnSubscribe");
+                request(Long.MAX_VALUE);
             }
 
             @Override
             protected void hookOnNext(Integer value) {
-                System.out.println(value);
-                // request(1);
+                System.out.println(Thread.currentThread().getName() + ":hookOnNext:" + value);
             }
 
             @Override
             protected void hookOnComplete() {
-                System.out.println("complete");
+                System.out.println(Thread.currentThread().getName() + ":hookOnComplete");
             }
 
             @Override
             protected void hookOnError(Throwable throwable) {
-                System.err.println("Error: " + throwable);
+                System.out.println(Thread.currentThread().getName() + ":hookOnError:" + throwable);
             }
         });
+
+        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
     }
 
     /**
      * 回压: 即request(xx), 以下几种方式订阅的时候都是request(Long.maxValue), 不限制push的速度, 即禁用了回压, 此时publisher是不会被阻塞住!
      * 1. subscribe方式默认
-     * 2/ block
+     * 2. block
      * 3. toStream / toIterable
      */
     @Test
@@ -169,7 +161,6 @@ public class ReactorCoreSpec {
         Flux.range(1, 10).subscribe(System.out::println);
         // block
         System.out.println(Flux.range(1, 10).blockFirst());
-
         // toIterable toStream
         Flux.range(10, 10).toStream().forEach(System.out::print);
     }
@@ -186,7 +177,7 @@ public class ReactorCoreSpec {
         System.out.println("------------------");
 
         // 流控, limitRate: push的数量
-        Flux.range(10, 20).limitRate(4).subscribe(new BaseSubscriber<Integer>() {
+        Flux.range(10, 20).limitRate(4).subscribe(new BaseSubscriber<>() {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
                 subscription.request(10);
@@ -194,127 +185,6 @@ public class ReactorCoreSpec {
 
             @Override
             protected void hookOnNext(Integer value) {
-                System.out.println(value);
-            }
-        });
-    }
-
-    /**
-     * 同步订阅模型, 逐个产生元素
-     * 有点像迭代器模型. 将iterator转成stream
-     * <p>
-     * sink: 产生一个消息给订阅者. sink是flux的另一种数据源(代码方式创建)
-     * - 需要一个状态值用于下一次调用
-     * - 每次最多一个onNext和complete/error
-     */
-    @Test
-    public void generate() {
-        Flux<String> flux = Flux.generate(
-                () -> 0,
-                (status, synchronousSink) -> {
-                    synchronousSink.next("status" + status);
-                    if (status == 10) {
-                        synchronousSink.complete();
-                    }
-                    return status + 1;
-                },
-                System.out::println // complete时回调status
-        );
-
-        flux.subscribe(System.out::println);
-
-        Flux<List<Integer>> flux2 = Flux.generate(
-                () -> Arrays.asList(3, 4),
-                (lists, synchronousSink) -> {
-                    if (lists.isEmpty()) {
-                        synchronousSink.complete();
-                    }
-                    synchronousSink.next(lists);
-                    try {
-                        TimeUnit.SECONDS.sleep(2);
-                    } catch (InterruptedException e) {
-                    }
-                    return Arrays.asList(1, 2);
-                }
-        );
-        flux2.subscribe(integers -> System.out.println(JSON.toJSONString(integers)));
-    }
-
-    /**
-     * create:
-     * 1. 支持异步, 可以一次产生多个元素
-     * 2. 将回调模式转成响应式
-     * 3. 支持控制回压
-     */
-    @Test
-    public void create() {
-        SettableFuture<String> future = SettableFuture.create();
-        Flux<String> flux = Flux.create(fluxSink ->
-                        future.addCallback(new FutureCallback<String>() {
-                            @Override
-                            public void onSuccess(@Nullable String result) {
-                                String threadName = Thread.currentThread().getName();
-                                // 每轮支持发射多个, 并且可以是不同的线程
-                                new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
-                                new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
-                                fluxSink.onRequest(num -> System.out.println("consumer nums: " + num)); // onRequest回调
-                            }
-
-                            @Override
-                            public void onFailure(Throwable t) {
-                                fluxSink.error(t);
-                            }
-                        }, MoreExecutors.directExecutor()),
-                FluxSink.OverflowStrategy.BUFFER // 回压策略, 默认是缓存起来
-        );
-        flux.subscribe(System.out::println);
-
-        future.set("a");
-    }
-
-    /**
-     * push: sink#next不存在并发调用清空下使用, 通常是同一个线程产生数据的场景.
-     * 和create的区别: create支持并发调用sink#next, 底层通过锁保证数据安全, 但是push没有.
-     */
-    @Test
-    public void push() {
-        SettableFuture<String> future = SettableFuture.create();
-        Flux<String> flux = Flux.push(fluxSink ->
-                future.addCallback(new FutureCallback<String>() {
-                    @Override
-                    public void onSuccess(@Nullable String result) {
-                        String threadName = Thread.currentThread().getName();
-                        // push: 并发的调用next会有问题
-                        new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + result)).start();
-                    }
-
-                    @Override
-                    public void onFailure(Throwable t) {
-                        fluxSink.error(t);
-                    }
-                }, MoreExecutors.directExecutor())
-        );
-        flux.subscribe(System.out::println);
-
-        future.set("a");
-    }
-
-    /**
-     * onRequest: 收到subscriber request请求时进行回调, 如果此时直接发射消息, 即相当于poll模式
-     */
-    @Test
-    public void hybridPushAndPull() {
-        Flux<String> flux = Flux.create(fluxSink ->
-                fluxSink.onRequest(n -> fluxSink.next("obtain source..." + n)) // 此时可以调用远程服务, 即相当于pull模型
-        );
-        flux.subscribe(new BaseSubscriber<String>() {
-            @Override
-            protected void hookOnSubscribe(Subscription subscription) {
-                subscription.request(2);
-            }
-
-            @Override
-            protected void hookOnNext(String value) {
                 System.out.println(value);
             }
         });
