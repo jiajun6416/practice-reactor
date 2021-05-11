@@ -7,11 +7,13 @@ sourceCompatibility = JavaVersion.VERSION_11
 targetCompatibility = JavaVersion.VERSION_11
 
 dependencies {
-    implementation platform('io.projectreactor:reactor-bom:2020.0.0-M1')
+    implementation platform('io.projectreactor:reactor-bom:2020.0.6')
     implementation project(':future-converter')
 
+    // 对应3.4.5版本
     implementation 'io.projectreactor:reactor-core'
     implementation 'io.projectreactor.addons:reactor-extra'
     implementation 'io.projectreactor:reactor-test'
+
     implementation 'com.jiajun:practice-common:1.0.0'
 }

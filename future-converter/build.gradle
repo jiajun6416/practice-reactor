@@ -1,5 +1,5 @@
 dependencies {
-    implementation platform('io.projectreactor:reactor-bom:2020.0.0-M1')
+    implementation platform('io.projectreactor:reactor-bom:2020.0.6')
     implementation 'io.projectreactor:reactor-core'
     implementation 'com.ximalaya.mainstay:mainstay-all:3.0.22'
 }

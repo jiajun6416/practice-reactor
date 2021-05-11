@@ -1,5 +1,7 @@
 dependencies {
     implementation platform('org.springframework.boot:spring-boot-dependencies:2.2.7.RELEASE')
+    implementation platform('io.projectreactor:reactor-bom:2020.0.6')
+
     implementation 'org.springframework.boot:spring-boot-starter-tomcat'
     implementation ('org.springframework.boot:spring-boot-starter-webflux') {
         exclude module: 'spring-boot-starter-reactor-netty'
