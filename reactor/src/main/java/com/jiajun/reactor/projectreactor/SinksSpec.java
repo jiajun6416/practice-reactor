@@ -7,6 +7,7 @@ import reactor.core.publisher.Sinks;
 import reactor.util.concurrent.Queues;
 
 import java.time.Duration;
+import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -68,31 +69,39 @@ public class SinksSpec {
      */
     @Test
     public void unicast() {
-        Sinks.UnicastSpec unicast = Sinks.many().unicast();
-        Sinks.Many<Long> sink = unicast.onBackpressureBuffer(Queues.<Long>get(2000).get()); // Sinks.many类型的sink
-        Flux<Long> fluxView = sink.asFlux(); // 可以转为Flux
-
-        Flux.interval(Duration.ofMillis(500)).subscribe(aLong -> {
-            sink.emitNext(aLong, Sinks.EmitFailureHandler.FAIL_FAST); // 线程一
-            System.out.println("thread: " + Thread.currentThread().getName() + ", emitNext item: " + aLong);
-        });
-        Flux.interval(Duration.ofMillis(500)).subscribe(aLong -> {
-            Sinks.EmitResult emitResult = sink.tryEmitNext(aLong);// 线程二
-            System.out.println("thread: " + Thread.currentThread().getName() + ", tryEmitNext item: " + aLong + ", result: " + emitResult);
+        // case1: 有界队列, 无消费者
+        Queue<Long> buffer1 = Queues.<Long>get(16).get();
+        Sinks.Many<Long> sink1 = Sinks.many().unicast().onBackpressureBuffer(buffer1);
+        Flux.interval(Duration.ofMillis(10)).subscribe(aLong -> {
+            sink1.emitNext(aLong, (signalType, emitResult) -> {
+                //System.out.println("signalType: " + signalType + ", emitResult" + emitResult + ", bufferSize: " + buffer1.size());
+                return false; // 不重发
+            });
         });
 
-        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
-        fluxView.subscribe(aLong -> System.out.println("subscribe1: " + System.currentTimeMillis() + ": " + aLong));
-        // emitter.asFlux().subscribe(aLong -> System.out.println("subscribe2: " + aLong)); // 会丢异常, 只支持一个订阅者
+        // case2: 只支持一个订阅者
+        Sinks.Many<String> sink2 = Sinks.many().unicast().onBackpressureBuffer(Queues.<String>get(2000).get()); // Sinks.many类型的sink
+        Flux<String> fluxView2 = sink2.asFlux(); // 可以转为Flux
+        fluxView2.subscribe(item -> System.out.println("item: " + item));
+        // fluxView2.subscribe(item -> System.out.println("item: " + item)); // 会丢异常, 只支持一个订阅者
+
+        Flux.interval(Duration.ofMillis(1000)).subscribe(aLong -> {
+            sink2.emitNext("emitNext1: " + Thread.currentThread().getName() + ": " + aLong, Sinks.EmitFailureHandler.FAIL_FAST);
+            sink2.emitNext("emitNext2: " + Thread.currentThread().getName() + ": " + aLong, Sinks.EmitFailureHandler.FAIL_FAST);
+        });
+
+        // 不支持在多个线程中同时调用next, 会有线程安全问题, 回报非串行化异常
+        Flux.interval(Duration.ofMillis(1000)).subscribe(aLong -> {
+            //sink2.tryEmitNext("emitNext3: " + Thread.currentThread().getName() + ": " + aLong);
+        });
 
         Uninterruptibles.sleepUninterruptibly(3, TimeUnit.SECONDS);
-        sink.tryEmitComplete(); // 完成
+        sink2.tryEmitComplete(); // 完成
         System.out.println("sink tryEmitComplete!");
     }
 
     /**
-     * 支持多个订阅者, 支持设置发送的回压处理策略
-     * 如果没有订阅者，那么接收的消息直接丢弃, 如果所有订阅者都取消, 则发射缓冲区数据(假设有)也会被清除
+     * 支持多个订阅者, 支持设置发送的回压处理策略, 所有的消息
      */
     @Test
     public void multicast() {
@@ -109,5 +118,28 @@ public class SinksSpec {
         Sinks.many().replay().limit(10000);
         Sinks.many().replay().limit(Duration.ofMillis(1));
         Sinks.many().replay().all(); //
+    }
+
+    /**
+     * unsafe操作符: 支持多线程并发调用sink#next, 其序列顺序是乱序的(非线程安全, 非有序)
+     */
+    @Test
+    public void sinksUnsafe() {
+        Sinks.Many<String> unsafeSink = Sinks.unsafe().many().unicast().onBackpressureBuffer(Queues.<String>get(2000).get());
+        Flux<String> fluxView = unsafeSink.asFlux();
+        fluxView.subscribe(item -> System.out.println("item: " + item));
+
+        Flux.interval(Duration.ofMillis(1000)).subscribe(aLong -> {
+            unsafeSink.emitNext("emitNext1: " + Thread.currentThread().getName() + ": " + aLong, Sinks.EmitFailureHandler.FAIL_FAST);
+            unsafeSink.emitNext("emitNext2: " + Thread.currentThread().getName() + ": " + aLong, Sinks.EmitFailureHandler.FAIL_FAST);
+        });
+
+        // 不支持在多个线程中同时调用next, 会有线程安全问题
+        Flux.interval(Duration.ofMillis(1000)).subscribe(aLong -> {
+            unsafeSink.tryEmitNext("emitNext3: " + Thread.currentThread().getName() + ": " + aLong);
+        });
+
+        Uninterruptibles.sleepUninterruptibly(3, TimeUnit.SECONDS);
+        unsafeSink.tryEmitComplete(); // 完成
     }
 }
