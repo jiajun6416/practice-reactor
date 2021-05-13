@@ -10,13 +10,6 @@ import java.time.Duration;
 import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Cold: 没有订阅者则永远不会生成序列, 无论订阅者在何时订阅数据流, 总能收到数据流中产生的全部数据
- * Hot: 没有订阅者仍然会生成序列, 订阅者只能获取到在其订阅之后产生的数据
- *
- * @author jiajun
- * https://projectreactor.io/docs/core/release/reference/index.html#reactor.hotCold
- */
 public class SinksSpec {
 
     /**
@@ -105,9 +98,11 @@ public class SinksSpec {
      */
     @Test
     public void multicast() {
-        Sinks.MulticastSpec multicast = Sinks.many().multicast();
+        Sinks.MulticastSpec multicast = Sinks.many().multicast(); // 线程安全
         // 缓冲指定数量, 假设所有订阅者都断开了则自动清空缓存
         Sinks.Many<Long> sinks = multicast.onBackpressureBuffer(2000, true);
+        // multicast.directAllOrNothing();// 有一个消费者消费不拉消息导致阻塞, 则消息直接丢弃
+        // multicast.directBestEffort(); // 不拉消息的消费者丢弃消息, 不影响其他消费者
     }
 
     /**
@@ -141,5 +136,28 @@ public class SinksSpec {
 
         Uninterruptibles.sleepUninterruptibly(3, TimeUnit.SECONDS);
         unsafeSink.tryEmitComplete(); // 完成
+    }
+
+    /**
+     * hot流, 消费者只能收到订阅后的数据
+     */
+    @Test
+    public void hot() {
+        // directBestEffort: 只会丢弃慢消费者的消息, 其他消费者不受影响
+        Sinks.Many<String> hotSource = Sinks.unsafe().many().multicast().directBestEffort();
+
+        Flux<String> hotFlux = hotSource.asFlux().map(String::toUpperCase);
+        hotSource.emitNext("noSubscribe", Sinks.EmitFailureHandler.FAIL_FAST);
+
+        hotFlux.subscribe(d -> System.out.println("Subscriber 1 to Hot Source: " + d));
+
+        hotSource.emitNext("blue", Sinks.EmitFailureHandler.FAIL_FAST);
+        hotSource.tryEmitNext("green").orThrow();
+
+        hotFlux.subscribe(d -> System.out.println("Subscriber 2 to Hot Source: " + d));
+
+        hotSource.emitNext("orange", Sinks.EmitFailureHandler.FAIL_FAST);
+        hotSource.emitNext("purple", Sinks.EmitFailureHandler.FAIL_FAST);
+        hotSource.emitComplete(Sinks.EmitFailureHandler.FAIL_FAST);
     }
 }
