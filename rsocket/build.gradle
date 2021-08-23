@@ -1,0 +1,11 @@
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:2.3.7.RELEASE')
+    implementation 'org.springframework.boot:spring-boot-starter-rsocket'
+    implementation 'org.springframework.boot:spring-boot-starter-test'
+
+    // implementation 'io.rsocket:rsocket-core:1.1.1'
+    // implementation 'io.rsocket:rsocket-transport-netty:1.1.1'
+
+}
+
+

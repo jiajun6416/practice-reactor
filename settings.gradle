@@ -3,4 +3,5 @@ include 'reactor'
 include 'reactive-stream'
 include 'webflux'
 include 'future-converter'
+include 'rsocket'
 
