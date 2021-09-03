@@ -18,6 +18,7 @@ import java.util.List;
 public class ApacheCommonObserver {
 
     /**
+     * 实现思路和dubbo中client的代理类似, 移花接木
      * @param <T>
      * @see org.apache.commons.lang3.event.EventListenerSupport
      * 单一的事件广播器
