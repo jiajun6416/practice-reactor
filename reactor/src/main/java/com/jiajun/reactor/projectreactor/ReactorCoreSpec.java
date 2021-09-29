@@ -4,6 +4,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.common.util.concurrent.Uninterruptibles;
+import org.apache.commons.collections4.CollectionUtils;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.Test;
 import org.reactivestreams.Publisher;
@@ -25,16 +26,14 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * @author jiajun
@@ -728,7 +727,7 @@ public class ReactorCoreSpec {
     }
 
     /**
-     * 同步获取所有序列. 阻塞式流处理
+     * 同步获取所有序列. 阻塞式流处理(等待消费完所有的item!)
      * - block
      * - toIterator / toStream
      * -  toFuture
@@ -739,5 +738,56 @@ public class ReactorCoreSpec {
         Flux.range(1, 100).toIterable();
         Mono.just(2).toFuture();
         Mono.just(1).then(); // then: 等待mono结束
+    }
+
+    /**
+     * batchSize: 批量消费模式下的对象缓存!
+     */
+    @Test
+    public void fluxToStreamOrIterator() {
+        Flux<List<Integer>> flux = Flux.generate(() -> 0, (idx, sink) -> {
+            if (idx > 1000) {
+                sink.complete();
+                return idx + 1;
+            }
+            List<Integer> item = IntStream.range(0, 100).boxed().collect(Collectors.toList());
+            sink.next(item);
+            return idx + 1;
+        });
+        int batchSize = 256; // 批量消费batchSize个元素后, 再进行迭代遍历. 会存在batchSize个元素的缓存. 如果每个item占用空间很大的话, 会造成OOM
+        // batchSize = 1; // batchSize=1时等同于使用迭代器.
+        flux.toStream(batchSize).forEach(System.out::println);
+    }
+
+    /**
+     * java中Iterator转成Stream, 只支持单个消费模式, 不存在Item缓存的问题, 即不存在OOM的风险.
+     */
+    @Test
+    public void iteratorToStream() {
+        // 内部是: 先调用hasNext, 再调用next
+        Spliterator<List<Integer>> spliterator = Spliterators.spliteratorUnknownSize(new Iterator<>() {
+            int idx;
+
+            List<Integer> item;
+
+            @Override
+            public boolean hasNext() {
+                if (idx > 1000) {
+                    return false;
+                }
+                item = IntStream.range(0, 100).boxed().collect(Collectors.toList());
+                return true;
+            }
+
+            @Override
+            public List<Integer> next() {
+                if (CollectionUtils.isEmpty(item)) {
+                    throw new UnsupportedOperationException();
+                }
+                idx++;
+                return item;
+            }
+        }, Spliterator.NONNULL/*非空*/);
+        StreamSupport.stream(spliterator, false/*同步*/).forEach(System.out::println);
     }
 }
