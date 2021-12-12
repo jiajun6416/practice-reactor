@@ -86,7 +86,8 @@ public class ProgrammaticallyCreateASequence {
                 ,
                 FluxSink.OverflowStrategy.BUFFER // 回压策略, 默认是缓存起来
         );
-        flux.subscribe(System.out::println);
+        flux.subscribe(s -> System.out.println("subscribe1 " + s));
+        flux.subscribe(s -> System.out.println("subscribe2 " + s));
 
         listener.onEvent("a");
         Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
@@ -108,7 +109,8 @@ public class ProgrammaticallyCreateASequence {
                     new Thread(() -> fluxSink.next(Thread.currentThread().getName() + "&" + threadName + "&" + event)).start();
                 })
         );
-        flux.subscribe(System.out::println);
+        flux.subscribe(s -> System.out.println("subscribe1 " + s));
+        flux.subscribe(s -> System.out.println("subscribe2 " + s));
 
         listener.onEvent("a");
         Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);

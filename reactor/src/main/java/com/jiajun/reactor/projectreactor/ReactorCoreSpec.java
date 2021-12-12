@@ -11,10 +11,7 @@ import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import reactor.core.Disposable;
 import reactor.core.Exceptions;
-import reactor.core.publisher.BaseSubscriber;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.GroupedFlux;
-import reactor.core.publisher.Mono;
+import reactor.core.publisher.*;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.context.Context;
@@ -126,7 +123,8 @@ public class ReactorCoreSpec {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
                 System.out.println(Thread.currentThread().getName() + ":hookOnSubscribe");
-                request(Long.MAX_VALUE);
+                //request(Long.MAX_VALUE);
+                request(5); // 指定请求几个item
             }
 
             @Override
@@ -143,9 +141,57 @@ public class ReactorCoreSpec {
             protected void hookOnError(Throwable throwable) {
                 System.out.println(Thread.currentThread().getName() + ":hookOnError:" + throwable);
             }
+
+            @Override
+            protected void hookOnCancel() {
+                System.out.println(Thread.currentThread().getName() + ":hookOnCancel");
+            }
+
+            @Override
+            protected void hookFinally(SignalType type) {
+                System.out.println(Thread.currentThread().getName() + ":SignalType: " + type);
+            }
         });
 
         Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
+    }
+
+    /**
+     * #{@link BaseSubscriber#upstream()}: BaseSubscriber中成员变量持有`Subscription`对象, 可以随时拿来使用
+     */
+    @Test
+    public void directOperateSubscription() {
+        Flux<Integer> flux = Flux.range(1, 10);
+        flux.subscribe(new BaseSubscriber<>() {
+
+            @Override
+            protected void hookOnSubscribe(Subscription subscription) {
+                System.out.println(Thread.currentThread().getName() + ":hookOnSubscribe");
+                request(1); // 初始获取一个
+            }
+
+            @Override
+            protected void hookOnNext(Integer value) {
+                System.out.println(Thread.currentThread().getName() + ":hookOnNext:" + value);
+                Subscription subscription = upstream(); // 直接获取Subscription对象再次操作
+                subscription.request(1); // 每次onNext处理后接着request
+            }
+
+            @Override
+            protected void hookOnComplete() {
+                System.out.println(Thread.currentThread().getName() + ":hookOnComplete");
+            }
+
+            @Override
+            protected void hookOnError(Throwable throwable) {
+                System.out.println(Thread.currentThread().getName() + ":hookOnError:" + throwable);
+            }
+
+            @Override
+            protected void hookOnCancel() {
+                System.out.println(Thread.currentThread().getName() + ":hookOnCancel");
+            }
+        });
     }
 
     /**
@@ -522,6 +568,12 @@ public class ReactorCoreSpec {
 
     /**
      * doOn是只读操作, 不影响序列. 一般用来记录日志
+     * 通常有以下几种类型
+     * ON_COMPLETE: 正常完成
+     * ON_ERROR: 异常完成
+     * ON_CANCEL: 取消订阅
+     * <p>
+     * 很多时候只关心是否终止: doFinally, 所有的退出都会回调
      */
     @Test
     public void doOn() {
@@ -721,7 +773,7 @@ public class ReactorCoreSpec {
                     @Override
                     protected void hookOnNext(GroupedFlux<String, Integer> value) {
                         System.out.println(value.key());
-                        System.out.println(value.subscribe(System.out::print));
+                        value.subscribe(System.out::println);
                     }
                 });
     }

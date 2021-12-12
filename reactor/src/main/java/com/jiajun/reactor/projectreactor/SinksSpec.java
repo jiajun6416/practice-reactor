@@ -15,11 +15,19 @@ public class SinksSpec {
     /**
      * Cold
      * 1. 序列发射延迟特性, 在订阅前什么都不会发生
-     * 2. 每个订阅都会导致数据流重新发一遍
+     * 2. 每个订阅都会导致数据流重新发一遍!!
      */
     @Test
     public void cold() {
-        Flux<Integer> flux = Flux.range(1, 10);
+        Flux<Integer> flux = Flux.generate(() -> 0, (integer, sink) -> {
+            System.out.println("do publish: " + integer);
+            if (integer > 10) {
+                sink.complete();
+            }
+            integer++;
+            sink.next(integer);
+            return integer;
+        });
         flux.subscribe(i -> System.out.println("subscribe1: " + i));
         Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
         flux.subscribe(i -> System.out.println("subscribe2: " + i)); // 第二次订阅同样会获取到所有的序列
