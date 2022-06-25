@@ -400,7 +400,7 @@ public class ReactorCoreSpec {
      * **传播（Propagation） + 不可变性（immutability）**
      * <p>
      * 绑定: 操作.subscriberContext(ctx->)
-     * 读取: 静态方法Mono#subscriberContext, 只会读取最近(下面)的context
+     * 读取: 静态方法Mono#subscriberContext, 只会读取最近(下面)的context. 因为Publish是Lazy的, 是由Subscribe触发的.
      * 特性:
      * - 绑定subscribe,基于Subscription传播(由下往上)
      * - 不可变性: context每次修改都会返回一个新对象(put会把之前的内容putAll新context对象), subscriberContext对context的修改是不会互相影响的
@@ -420,15 +420,15 @@ public class ReactorCoreSpec {
                     System.out.println(System.identityHashCode(after));
                     return after;
                 })
-                .subscribe(System.out::print);
+                .subscribe(System.out::println);
 
         // 读取context
         // Mono#subscriberContext. 由于由下而上+不可变性(每次变动都是新对象), 在绑定context后面的操作符是获取不到context的
         Mono.just("a")
                 .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.get("key1") + "_" + s)) // 读取
                 .subscriberContext(ctx -> ctx.put("key1", "context1"))
-                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s)) // 读取不到
-                .subscribe(System.out::println);
+                .flatMap(s -> Mono.subscriberContext().map(cxt -> cxt.getOrDefault("key1", "empty") + "_" + s)) // 读取不到.
+                .subscribe(System.out::println); // empty_context1_a
 
         // Mono.subscriberContext()返回的是Mono, 使用的时候必须使用flat. 使用flatMap或者zipWith
         Mono.just("a")
@@ -441,7 +441,8 @@ public class ReactorCoreSpec {
                 .map(tuple -> {
                     Optional<Object> userOptional = tuple.getT2().getOrEmpty("uid");
                     return userOptional.map(o -> "loginUser: " + o).orElse("un login");
-                }).subscriberContext(ctx -> ctx.put("uid", 10086))
+                })
+                .subscriberContext(ctx -> ctx.put("uid", 10086))
                 .subscribe(System.out::println);
 
         // 只能读取到离当前操作符最近(下面)的context. 记住由于context的不可变性, 每次subscriberContext不会影响之前的subscriberContext

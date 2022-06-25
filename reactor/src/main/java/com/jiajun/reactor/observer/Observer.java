@@ -14,15 +14,6 @@ import java.util.Observable;
 public class Observer {
 
     /**
-     * 事件处理者
-     *
-     * @param <T>
-     */
-    public interface EventListener extends java.util.EventListener {
-        void onEvent(String event);
-    }
-
-    /**
      * JDK中Observable的子类
      *
      * @param <T>
@@ -61,7 +52,23 @@ public class Observer {
     }
 
     /**
-     * Apache-Common中EventListenerSupport的使用
+     * 事件处理者
+     *
+     * @param <T>
+     */
+    public interface EventListener extends java.util.EventListener {
+
+        // listener触发onEvent
+        void onEvent(String event);
+
+        // 生产者调用fireEvent
+        default void fireEvent(String event) {
+            onEvent(event);
+        }
+    }
+
+    /**
+     * Apache-Common中{@link EventListenerSupport}: 将被代理接口的方法广播到所有listener中执行, listener也是代理接口的实现.
      */
     @Test
     public void apacheEventListenerSupportTest() {
@@ -70,7 +77,7 @@ public class Observer {
         eventListenerSupport.addListener(event -> System.out.println("listener1 onEvent: " + event));
         eventListenerSupport.addListener(event -> System.out.println("listener2 onEvent: " + event));
 
-        eventListenerSupport.fire().onEvent("a");
-        eventListenerSupport.fire().onEvent("b");
+        eventListenerSupport.fire().fireEvent("a"); // 直接触发监听器的事件
+        eventListenerSupport.fire().fireEvent("b");
     }
 }

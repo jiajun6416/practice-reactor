@@ -12,7 +12,7 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * Guava中的Observer实现方案, 即EventBus
+ * Guava中的Observer实现方案, 即 {@link com.google.common.eventbus.EventBus}
  * 1. 支持多个事件
  * 2. 支持同步和异步
  * 3. 观察者无需定义单独的接口

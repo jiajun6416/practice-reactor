@@ -65,6 +65,8 @@ public class SinksSpec {
     }
 
     /**
+     * unicast: 单一传播, 即只支持一个订阅者
+     * <p>
      * 只能有一个订阅者, 支持设置发送的回压处理策略
      * 如果没有订阅者，那么保存接收的消息直到第一个订阅者订阅
      */
@@ -102,15 +104,31 @@ public class SinksSpec {
     }
 
     /**
+     * multicast: 广播, 支持多个订阅者
+     * <p>
+     * 不支持多线程调用{@link Sinks.Many#emitNext}
+     * <p>
      * 支持多个订阅者, 支持设置发送的回压处理策略, 所有的消息
      */
     @Test
     public void multicast() {
-        Sinks.MulticastSpec multicast = Sinks.many().multicast(); // 线程安全
+        Sinks.MulticastSpec multicast = Sinks.many().multicast();
         // 缓冲指定数量, 假设所有订阅者都断开了则自动清空缓存
-        Sinks.Many<Long> sinks = multicast.onBackpressureBuffer(2000, true);
+        Sinks.Many<Integer> sinks = multicast.onBackpressureBuffer(2000, true);
         // multicast.directAllOrNothing();// 有一个消费者消费不拉消息导致阻塞, 则消息直接丢弃
         // multicast.directBestEffort(); // 不拉消息的消费者丢弃消息, 不影响其他消费者
+
+        // 支持多个订阅者
+        Flux<Integer> flux = sinks.asFlux();
+        flux.subscribe(item -> System.out.println("subscribe1 item: " + item));
+        flux.subscribe(item -> System.out.println("subscribe2 item: " + item));
+
+        new Thread(() -> {
+            for (int i = 0; i < 10; i++) {
+                sinks.emitNext(i, (signalType, emitResult) -> false);
+            }
+        }).start();
+        Uninterruptibles.sleepUninterruptibly(3, TimeUnit.SECONDS);
     }
 
     /**

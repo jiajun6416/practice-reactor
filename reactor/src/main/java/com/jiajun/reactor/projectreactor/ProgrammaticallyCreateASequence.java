@@ -112,7 +112,7 @@ public class ProgrammaticallyCreateASequence {
         flux.subscribe(s -> System.out.println("subscribe1 " + s));
         flux.subscribe(s -> System.out.println("subscribe2 " + s));
 
-        listener.onEvent("a");
+        listener.fireEvent("a");
         Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
     }
 
@@ -127,14 +127,16 @@ public class ProgrammaticallyCreateASequence {
         Flux<String> flux = Flux.create(fluxSink -> {
             eventListenerSupport.addListener(event -> fluxSink.next("push item: " + event)); // push模式
             fluxSink.onRequest(n -> {
+                // pull模式: subscribe#request(n)后触发
                 for (int i = 0; i < n / 2; i++) {
                     fluxSink.next("pull item: " + i);
                 }
-            }); // pull模式: subscribe#request(n)后触发
+            });
         });
         flux.subscribeOn(Schedulers.single()).subscribe(new BaseSubscriber<>() {
             @Override
             protected void hookOnSubscribe(Subscription subscription) {
+                // 拉取20个消息
                 subscription.request(20);
             }
 
@@ -144,7 +146,7 @@ public class ProgrammaticallyCreateASequence {
             }
         });
         for (int i = 0; i < 10; i++) {
-            eventListener.onEvent(String.valueOf(i));
+            eventListener.fireEvent(String.valueOf(i));
             Uninterruptibles.sleepUninterruptibly(50, TimeUnit.MILLISECONDS);
         }
         Uninterruptibles.sleepUninterruptibly(5, TimeUnit.SECONDS);
