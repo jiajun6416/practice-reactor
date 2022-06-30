@@ -7,7 +7,10 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 每个id一个断路器
+ * 使用id标识资源, 每个资源一个熔断器
+ * 窗口大小: 10s
+ * 熔断的阈值: 10s内请求数 >= 10 && 异常比例 >= 50
+ * 熔断的缓慢恢复: 每10s内没有异常(没有流量)恢复50的流量
  *
  * @author jiajun
  */
@@ -36,49 +39,53 @@ public class CircuitBreaker {
     private static final int CIRCUIT_THRESHOLD_MAX = 1000;
 
     /**
-     * 所有时间窗口内的数据, key是s
+     * 所有时间窗口内的数据, key是s.
      */
     private Map<Long, WindowBucket> buckets = Maps.newHashMapWithExpectedSize(bucketCount);
 
     /**
-     * 所有buckets中请求数
+     * 窗口内所有请求
      */
     private volatile long totalRequestCnt = 0L;
 
     /**
-     * 所有buckets中错误数
+     * 窗口内失败数
      */
     private volatile long totalErrorCnt = 0L;
 
     /**
-     * 所有buckets中错误率 [0-100]
+     * 窗口内失败率 [0-100]
      */
     private volatile int errorRatePct = 0;
 
+    public CircuitBreaker(String id) {
+        this.id = id;
+    }
+
     /**
-     * 是否允许请求
-     * 未熔断: isOpen=false
+     * 是否允许请求, 即判断熔断器是否关闭
      *
      * @return
      */
     public boolean allowRequest() {
+        boolean allowRequest = true;
         if (isCircuitOpening()) {
             // 随机熔断掉部分请求
-            return ThreadLocalRandom.current().nextInt(CIRCUIT_THRESHOLD_MAX) < circuitThreshold;
+            allowRequest = ThreadLocalRandom.current().nextInt(CIRCUIT_THRESHOLD_MAX) < circuitThreshold;
         } else {
-            if (totalRequestCnt < 10) {
-                // 总请求最小值: 样本数太少, 无法准确预估
-                return true;
+            if (totalRequestCnt >= 10 && errorRatePct >= 50) {
+                // 触发熔断的条件: 窗口内请求数 >= 阈值 && 失败率 >= 阈值
+                if (!isCircuitOpening()) {
+                    openCircuit();
+                }
+                allowRequest = false;
             }
-            if (errorRatePct < 50) {
-                // 超过一定的异常比例
-                return true;
-            }
-            if (!isCircuitOpening()) {
-                openCircuit(); // 触发熔断
-            }
-            return false;
         }
+        if (!allowRequest) {
+            // todo 记录
+            System.out.printf("api [%s] circuit info. totalReq: %s, totalError: %s, errorRate: %s \n", id, totalRequestCnt, totalErrorCnt, errorRatePct);
+        }
+        return allowRequest;
     }
 
     /**
@@ -86,29 +93,30 @@ public class CircuitBreaker {
      *
      * @param bucket
      */
-    public void updateRollingWindowInfo(WindowBucket bucket) {
+    public void updateNewBucket(WindowBucket bucket) {
         if (bucket == null || !bucket.getId().equals(id)) {
             return;
         }
+
         // 窗口的buckets
         long currentIdx = System.currentTimeMillis() / 1000;
-        buckets.entrySet().removeIf(secondResultEntry -> secondResultEntry.getKey() <= currentIdx - 10L); // 移除旧数据
+        buckets.entrySet().removeIf(secondResultEntry -> secondResultEntry.getKey() <= currentIdx - 10L); // 移除旧数据, 按照时间移除
         buckets.put(currentIdx, bucket);
 
         // 总请求计数
-        totalRequestCnt = buckets.values().stream().map(WindowBucket::getRequestCnt).count();
-        totalErrorCnt = buckets.values().stream().map(WindowBucket::getErrorCnt).count();
+        totalRequestCnt = buckets.values().stream().map(WindowBucket::getRequestCnt).mapToInt(Integer::intValue).sum();
+        totalErrorCnt = buckets.values().stream().map(WindowBucket::getErrorCnt).mapToInt(Integer::intValue).sum();
         if (totalRequestCnt == 0) {
             this.errorRatePct = 0;
         } else {
             this.errorRatePct = (int) (totalErrorCnt * 100 / totalRequestCnt);
         }
 
-        // 熔断恢复策略:
+        // 熔断恢复策略: 缓慢恢复策略
         if (isCircuitOpening()) {
-            final int defaultCircuitBreakerRecoverRatio = 50; // 每秒恢复数, 每秒恢复5%, 连续20s正常则完全恢复
+            final int defaultCircuitBreakerRecoverRatio = 50; // 每秒恢复的比例
             if (bucket.getErrorCnt() == 0) {
-                // 最近一个窗口没有错误, 恢复
+                // 最近一个窗口内没有异常: 没请求或请求了没异常
                 circuitThreshold += defaultCircuitBreakerRecoverRatio;
                 if (circuitThreshold > CIRCUIT_THRESHOLD_MAX) {
                     circuitThreshold = CIRCUIT_THRESHOLD_MAX;

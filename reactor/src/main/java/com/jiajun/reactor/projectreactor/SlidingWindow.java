@@ -22,15 +22,14 @@ import java.util.function.Function;
  */
 public class SlidingWindow {
 
-    private Sinks.Many<InvokeResult> sink = Sinks
-            .unsafe()
-            .many().multicast().directBestEffort();
+    private Sinks.Many<InvokeResult> sink = Sinks.unsafe().many().multicast().directBestEffort();
 
-    private Flux<InvokeResult> fluxView = sink.asFlux();
+    private Flux<InvokeResult> fluxView = sink.asFlux(); // 广播模式的sink, 支持多次订阅
 
     @Data
     @AllArgsConstructor
     static class InvokeResult {
+
         private String method; // 方法
 
         private boolean success; // 请求结果
@@ -41,6 +40,7 @@ public class SlidingWindow {
     @Data
     @AllArgsConstructor
     static class InvokeSecondResult {
+
         private String method; // 方法
 
         private int successNum; // 一秒内成功总数
@@ -87,14 +87,15 @@ public class SlidingWindow {
                         return invokeSecondResult;
                     }).last(new InvokeSecondResult(methodName)); // 如果没有元素, 返回一个默认值
                 }, 8, 256);
+
         // window结果订阅
         invokeSecondResultFlux.subscribe(secondResult -> {
             if (secondResult.getTotalCostTime() > 0) {
                 secondResult.setAveCostTime(secondResult.getTotalCostTime() / (secondResult.getSuccessNum() + secondResult.getFailNum()));
             }
-            System.out.println("ts: " + System.currentTimeMillis() + ": " + JSON.toJSONString(secondResult));
+            System.out.println("thread: " + Thread.currentThread().getName() + ", ts: " + System.currentTimeMillis() + ": " + JSON.toJSONString(secondResult));
         });
-        fluxView.window(Duration.ofSeconds(1)).flatMap(Flux::collectList).subscribe(invokeResults -> System.out.println("results size: " + invokeResults.size()));
+        // fluxView.window(Duration.ofSeconds(1)).flatMap(Flux::collectList).subscribe(invokeResults -> System.out.println("results size: " + invokeResults.size()));
 
         Uninterruptibles.sleepUninterruptibly(10, TimeUnit.SECONDS);
     }

@@ -705,6 +705,8 @@ public class ReactorCoreSpec {
      * 3. 个数/时间
      * 4. 元素的条件
      * - n窗口重叠现象(适用于滑动窗口): 窗口宽度>两个窗口的间隔, 则会出现部分数据在两个窗口中. 窗口宽度>>两个窗口的间隔, 会同时存在很多窗口
+     *
+     * 底层使用了一个公共的线程池 {@link Schedulers#parallel()}
      */
     @Test
     public void splitWindow() throws IOException {

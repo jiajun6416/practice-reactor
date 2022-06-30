@@ -3,7 +3,7 @@ package com.jiajun.reactor.circuit;
 import lombok.Data;
 
 /**
- * 滑动窗口中每秒一个桶
+ * 滑动窗口中的桶
  *
  * @author jiajun
  */
@@ -12,9 +12,9 @@ public class WindowBucket {
 
     private String id; // 唯一标识
 
-    private int requestCnt; // 总请求总数
+    public int requestCnt; // 总请求总数
 
-    private int errorCnt; // 异常数
+    public int errorCnt; // 异常数
 
     public WindowBucket(String id) {
         this.id = id;
