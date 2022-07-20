@@ -2,10 +2,7 @@ package com.jiajun.reactor.projectreactor;
 
 import reactor.core.publisher.Flux;
 
-import java.util.Iterator;
-import java.util.List;
-import java.util.Spliterator;
-import java.util.Spliterators;
+import java.util.*;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -39,34 +36,39 @@ public class PageStream {
      * @return
      */
     public static <T> Stream<List<T>> byPageLimit(final int pageSize, OffsetLimitQuery<T> offsetLimitQuery) {
-        Spliterator<List<T>> spliterator = Spliterators.spliteratorUnknownSize(new Iterator<List<T>>() {
+        Iterator<List<T>> iterator = new Iterator<>() {
             int offset;
 
-            List<T> result;
+            List<T> next;
 
-            boolean lastPage;
+            boolean end;
 
             @Override
             public boolean hasNext() {
-                if (lastPage) {
+                if (next != null && !next.isEmpty()) {
+                    return true;
+                }
+                if (end) {
                     return false;
                 }
-                result = offsetLimitQuery.apply(offset, pageSize);
-                boolean haxNext = result != null && !result.isEmpty();
-                lastPage = haxNext && result.size() < pageSize;
-                return haxNext;
+                List<T> list = offsetLimitQuery.apply(offset, pageSize);
+                end = list == null || list.size() < pageSize;
+                next = list;
+                return next != null && !next.isEmpty();
             }
 
             @Override
             public List<T> next() {
-                if (result == null || result.isEmpty()) {
-                    throw new UnsupportedOperationException();
+                if (next == null || next.isEmpty()) {
+                    throw new NoSuchElementException();
                 }
-                offset += result.size();
+                offset += next.size();
+                List<T> result = next;
+                next = null;
                 return result;
             }
-        }, Spliterator.NONNULL);
-        return StreamSupport.stream(spliterator, false);
+        };
+        return createStreamFromIterator(iterator);
     }
 
     /**
@@ -116,34 +118,50 @@ public class PageStream {
      * @return
      */
     public static <T> Stream<List<T>> byLastLimit(final int pageSize, LastItemLimitQuery<T> lastItemLimitQuery) {
-        Spliterator<List<T>> spliterator = Spliterators.spliteratorUnknownSize(new Iterator<List<T>>() {
-            List<T> result;
+        Iterator<List<T>> iterator = new Iterator<>() {
 
-            T lastItem;
+            List<T> next;
 
-            boolean lastPage;
+            T last;
+
+            boolean end;
 
             @Override
             public boolean hasNext() {
-                if (lastPage) {
+                if (next != null && !next.isEmpty()) {
+                    return true;
+                }
+                if (end) {
                     return false;
                 }
-                result = lastItemLimitQuery.apply(lastItem, pageSize);
-
-                boolean hasNext = result != null && !result.isEmpty();
-                lastPage = hasNext && result.size() < pageSize;
-                return hasNext;
+                List<T> list = lastItemLimitQuery.apply(last, pageSize);
+                end = list == null || list.size() < pageSize;
+                next = list;
+                return next != null && !next.isEmpty();
             }
 
             @Override
             public List<T> next() {
-                if (result == null || result.isEmpty()) {
-                    throw new UnsupportedOperationException();
+                if (next == null || next.isEmpty()) {
+                    throw new NoSuchElementException();
                 }
-                lastItem = result.get(result.size() - 1);
+                last = next.get(next.size() - 1);
+                List<T> result = next;
+                next = null;
                 return result;
             }
-        }, Spliterator.NONNULL);
+        };
+        return createStreamFromIterator(iterator);
+    }
+
+    /**
+     * 将迭代器转成Stream. {@link org.springframework.data.util.StreamUtils#createStreamFromIterator(java.util.Iterator<T>)}
+     * @param iterator
+     * @param <T>
+     * @return
+     */
+    public static <T> Stream<T> createStreamFromIterator(Iterator<T> iterator) {
+        Spliterator<T> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.NONNULL);
         return StreamSupport.stream(spliterator, false);
     }
 
