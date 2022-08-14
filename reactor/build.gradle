@@ -15,5 +15,8 @@ dependencies {
     implementation 'io.projectreactor.addons:reactor-extra'
     implementation 'io.projectreactor:reactor-test'
 
-    implementation 'com.jiajun:practice-common:1.0.0'
+    implementation 'org.apache.commons:commons-lang3:3.9'
+    implementation 'org.apache.commons:commons-collections4:4.4'
+    implementation 'com.google.guava:guava:25.1-jre'
+    implementation 'com.alibaba:fastjson:1.2.83'
 }
